@@ -451,3 +451,39 @@ code {
   .manual-row        { grid-template-columns: 1fr 60px 60px 90px 30px; }
   .manual-header     { grid-template-columns: 1fr 60px 60px 90px 30px; }
 }
+
+/* ── 1행 3열: 서버상태 / 사용방법 / 범례 ──────────── */
+.info-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+  align-items: stretch;
+}
+/* 3열이 좁아지면 1열로 전환 */
+@media (max-width: 900px) {
+  .info-row { grid-template-columns: 1fr; }
+}
+/* tip 박스가 info-row 안에서 높이 100% 채우도록 */
+.info-row .tip {
+  margin-bottom: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* ── info-row 색상 변형 ─────────────────────────── */
+.tip.tip-green {
+  background: #f0fdf4;
+  border-color: #86efac;
+  border-left-color: #16a34a;
+  color: #14532d;
+}
+.tip.tip-green strong { color: #15803d; }
+
+.tip.tip-white {
+  background: #ffffff;
+  border-color: #d0d8e8;
+  border-left-color: #1a4b8c;
+  color: #1a1a2e;
+}
+.tip.tip-white strong { color: #1a4b8c; }
