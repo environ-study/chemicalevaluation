@@ -251,7 +251,7 @@ header {
 /* ── 직접입력 헤더 ──────────────────────────────────────── */
 .manual-header {
   display: grid;
-  grid-template-columns: 160px 80px 80px auto 34px;
+  grid-template-columns: 1fr 70px 70px 110px 34px;
   gap: 6px;
   margin-bottom: 4px;
   font-size: 11px;
@@ -262,7 +262,7 @@ header {
 /* ── 직접입력 행 ────────────────────────────────────────── */
 .manual-row {
   display: grid;
-  grid-template-columns: 160px 80px 80px auto 34px;
+  grid-template-columns: 1fr 70px 70px 110px 34px;
   gap: 6px;
   align-items: center;
   margin-bottom: 6px;
@@ -482,3 +482,36 @@ code {
   color: #1a1a2e;
 }
 .tip.tip-white strong { color: #1a4b8c; }
+
+/* ── CAS 최근검색 드롭다운 ──────────────────────────────── */
+.cas-wrap {
+  position: relative;
+}
+.cas-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--pri);
+  border-radius: var(--r);
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0,0,0,.12);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.cas-dropdown-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: monospace;
+  color: var(--text);
+  border-bottom: 1px solid #f1f5f9;
+}
+.cas-dropdown-item:hover { background: var(--pri-light); }
+.cas-dropdown-item .cas-count {
+  float: right;
+  font-size: 10px;
+  color: var(--muted);
+  font-family: 'Noto Sans KR', sans-serif;
+}
