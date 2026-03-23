@@ -483,35 +483,37 @@ code {
 }
 .tip.tip-white strong { color: #1a4b8c; }
 
-/* ── CAS 최근검색 드롭다운 ──────────────────────────────── */
-.cas-wrap {
-  position: relative;
+/* ── CAS 자주쓴 히스토리 바 ─────────────────────────────── */
+.cas-history-bar {
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px 0 8px;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 8px;
 }
-.cas-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  background: #fff;
-  border: 1px solid var(--pri);
-  border-radius: var(--r);
-  z-index: 200;
-  box-shadow: 0 4px 12px rgba(0,0,0,.12);
-  max-height: 160px;
-  overflow-y: auto;
-}
-.cas-dropdown-item {
-  padding: 6px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  font-family: monospace;
-  color: var(--text);
-  border-bottom: 1px solid #f1f5f9;
-}
-.cas-dropdown-item:hover { background: var(--pri-light); }
-.cas-dropdown-item .cas-count {
-  float: right;
+.cas-hist-label {
   font-size: 10px;
+  font-weight: 700;
   color: var(--muted);
-  font-family: 'Noto Sans KR', sans-serif;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.cas-hist-btn {
+  background: var(--pri-light);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--pri-dark);
+  cursor: pointer;
+  transition: .15s;
+  white-space: nowrap;
+}
+.cas-hist-btn:hover {
+  background: var(--pri);
+  color: #fff;
+  border-color: var(--pri);
 }
