@@ -356,9 +356,9 @@ table.reg td {
   text-align: center;
   font-size: 11px;
 }
-table.reg td.td-nm  { text-align: left; font-weight: 700; background: #f8fafd; min-width: 120px; max-width: 250px; font-size: 12px; }
-table.reg td.td-cas { font-family: monospace; font-size: 10px; color: #374151; text-align: left; white-space: nowrap; }
-table.reg td.td-num { font-size: 11px; font-weight: 600; }
+table.reg td.td-nm  { text-align: left; font-weight: 700; background: #f8fafd; min-width: 250px; max-width: 250px; font-size: 12px;word-break: break-all;}
+table.reg td.td-cas { font-family: 'Noto Sans KR', sans-serif;font-size: 12px; font-weight: 700;color: var(--text); text-align: center; white-space: nowrap;}
+table.reg td.td-num { font-size: 12px; font-weight: 700; }
 
 /* 셀 색상 유틸 */
 .cy  { color: var(--red);    font-weight: 700; background: #fff5f5; }
