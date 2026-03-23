@@ -25,6 +25,25 @@ const PROXY = 'https://chemicalevaluation-api.onrender.com';
 let sheetId = 0;   // MSDS 시트 순번
 let rowId   = 0;   // 입력 행 순번
 
+// CAS 검색 히스토리 (localStorage 기반)
+const CAS_HISTORY_KEY = 'cas_history';
+function getCasHistory() {
+  try { return JSON.parse(localStorage.getItem(CAS_HISTORY_KEY) || '{}'); }
+  catch { return {}; }
+}
+function recordCas(cas) {
+  if (!cas || cas.length < 5) return;
+  const h = getCasHistory();
+  h[cas] = (h[cas] || 0) + 1;
+  localStorage.setItem(CAS_HISTORY_KEY, JSON.stringify(h));
+}
+function getFrequentCas(minCount) {
+  const h = getCasHistory();
+  return Object.entries(h)
+    .filter(([, cnt]) => cnt >= minCount)
+    .sort((a, b) => b[1] - a[1]);
+}
+
 
 /* ═══════════════════════════════════════════════════════════
    2. 서버 연결 확인
@@ -124,14 +143,54 @@ function addManualRow(sid, cas, min, max, isLt) {
   row.id = 'mrow-' + id;
   row.dataset.sheet = sid;
 
-  /* CAS 번호 입력 */
+  /* CAS 번호 입력 — 래퍼 + 드롭다운 포함 */
+  const casWrap = document.createElement('div');
+  casWrap.className = 'cas-wrap';
+
   const casInput = document.createElement('input');
   casInput.type = 'text';
   casInput.placeholder = '예: 108-88-3';
   casInput.value = String(cas || '');
   casInput.id = 'cas-' + id;
   casInput.maxLength = 12;
+  casInput.style.width = '100%';
   casInput.setAttribute('oninput', 'onCASInput(this)');
+  casInput.setAttribute('autocomplete', 'off');
+
+  // 드롭다운 (3회 이상 검색된 CAS 목록)
+  const dropdown = document.createElement('div');
+  dropdown.className = 'cas-dropdown';
+  dropdown.id = 'cas-dd-' + id;
+  dropdown.style.display = 'none';
+
+  function refreshDropdown(filter) {
+    const freq = getFrequentCas(3);
+    const filtered = filter
+      ? freq.filter(([c]) => c.startsWith(filter))
+      : freq;
+    if (!filtered.length) { dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = filtered.map(([c, cnt]) =>
+      `<div class="cas-dropdown-item" data-cas="${c}">
+        ${c}<span class="cas-count">${cnt}회</span>
+      </div>`
+    ).join('');
+    dropdown.style.display = 'block';
+    dropdown.querySelectorAll('.cas-dropdown-item').forEach(item => {
+      item.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        casInput.value = item.dataset.cas;
+        onCASInput(casInput);
+        dropdown.style.display = 'none';
+      });
+    });
+  }
+
+  casInput.addEventListener('focus', () => refreshDropdown(casInput.value));
+  casInput.addEventListener('input', () => refreshDropdown(casInput.value));
+  casInput.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 150));
+
+  casWrap.appendChild(casInput);
+  casWrap.appendChild(dropdown);
 
   /* 최소 함량 */
   const minInput = document.createElement('input');
@@ -178,7 +237,7 @@ function addManualRow(sid, cas, min, max, isLt) {
   rmBtn.textContent = '✕';
   rmBtn.addEventListener('click', function () { row.remove(); });
 
-  row.appendChild(casInput);
+  row.appendChild(casWrap);
   row.appendChild(minInput);
   row.appendChild(maxInput);
   row.appendChild(label);
@@ -248,6 +307,17 @@ document.addEventListener('keydown', function (e) {
     const targetEl     = targetInputs[colIdx] || targetInputs[0];
     if (targetEl) { targetEl.focus(); if (targetEl.select) targetEl.select(); }
   }
+});
+
+// + 키 → 현재 포커스된 행의 시트에 행 추가
+document.addEventListener('keydown', function(e) {
+  if (e.key !== '+') return;
+  const el = document.activeElement;
+  const row = el?.closest('.manual-row');
+  if (!row) return;
+  e.preventDefault();
+  const sid = row.dataset.sheet;
+  if (sid) addManualRow(parseInt(sid), '', null, null, false);
 });
 
 
@@ -320,6 +390,7 @@ async function doManual() {
       const minV   = minRaw !== '' ? parseFloat(minRaw) : null;
       const maxV   = maxRaw !== '' ? parseFloat(maxRaw) : null;
       const isLt   = document.getElementById('lt-' + id)?.checked || false;
+      recordCas(cas);   // 히스토리 기록
       comps.push({
         cas_no:       cas,
         ke_no:        '',
