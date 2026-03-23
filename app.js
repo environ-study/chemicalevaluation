@@ -531,18 +531,29 @@ function buildKrHazard(kr) {
   if (kr.error) return `<td class="cd" title="${escAttr(kr.error)}">오류</td>`;
 
   const lines = [];
-  ['유독', '허가', '제한', '중점'].forEach(c => { if (kr[c] === 'Y') lines.push(`<span class="tag-org">${c}</span>`); });
-  if (kr['사고대비'] === 'Y') {
-    const b = kr['사고대비_기준'] ? ` ≥${kr['사고대비_기준']}` : '';
-    lines.push(`<span class="tag-org">사고대비${b}</span>`);
-  }
-  (kr['유해_기준표'] || []).forEach(r => {
-    if (r['기준값'] != null)
-      lines.push(`<span class="tag-yel">${escHtml(r['카테고리'])} ≥${r['기준값']}%</span>`);
+  // 1. 일반 규제 분류 태그 (주황색: 유독, 허가, 제한, 중점)
+  ['유독', '허가', '제한', '중점'].forEach(c => { 
+    if (kr[c] === 'Y') lines.push(`<span class="tag-org">${c}</span>`); 
   });
+
+  // 2. 인체·환경 유해성 및 사고대비 기준 태그 (노란색: tag-yel)
+  // 사고대비물질 정보를 포함하여 모든 기준치 항목을 여기서 출력합니다.
+  (kr['유해_기준표'] || []).forEach(r => {
+    if (r['기준값'] != null) {
+      lines.push(`<span class="tag-yel">${escHtml(r['카테고리'])} ≥${r['기준값']}%</span>`);
+    }
+  });
+
+  // 만약 유해_기준표에 없더라도 사고대비 'Y'인 경우 예외 처리 (보조용)
+  if (kr['사고대비'] === 'Y' && !lines.some(l => l.includes('사고대비'))) {
+    const b = kr['사고대비_기준'] ? ` ≥${kr['사고대비_기준']}%` : '';
+    lines.push(`<span class="tag-yel">사고대비${b}</span>`);
+  }
+
   const isHazardous = lines.length > 0;
-  if (!isHazardous && kr['기존화학_ke'])
+  if (!isHazardous && kr['기존화학_ke']) {
     lines.push(`<span class="tag-gray">기존 ${escHtml(kr['기존화학_ke'])}</span>`);
+  }
 
   if (!lines.length) return `<td class="cd">—</td>`;
   return `<td style="padding:4px 6px;text-align:left"><div style="line-height:1.8">${lines.join(' ')}</div></td>`;
