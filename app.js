@@ -27,23 +27,37 @@ let rowId   = 0;   // 입력 행 순번
 
 // CAS 검색 히스토리 (localStorage 기반)
 const CAS_HISTORY_KEY = 'cas_history';
+
+// 1. 데이터 구조 변경: { "CAS번호": { count: 횟수, lastUsed: 시간 } }
 function getCasHistory() {
   try { return JSON.parse(localStorage.getItem(CAS_HISTORY_KEY) || '{}'); }
   catch { return {}; }
 }
+
+// 2. 기록 시 '시간' 정보 업데이트 추가
 function recordCas(cas) {
   if (!cas || cas.length < 5) return;
   const h = getCasHistory();
-  h[cas] = (h[cas] || 0) + 1;
+  
+  if (!h[cas]) {
+    h[cas] = { count: 0, lastUsed: 0 };
+  }
+  
+  h[cas].count += 1;
+  h[cas].lastUsed = Date.now(); // 현재 시간을 밀리초로 저장
+  
   localStorage.setItem(CAS_HISTORY_KEY, JSON.stringify(h));
 }
-function getFrequentCas(minCount) {
+
+// 3. 필터링: 4회 이상 검색된 것 중 '최신순'으로 상위 10개 추출
+function getFrequentCas(minCount = 4) {
   const h = getCasHistory();
   return Object.entries(h)
-    .filter(([, cnt]) => cnt >= minCount)
-    .sort((a, b) => b[1] - a[1]);
+    .filter(([, data]) => data.count >= minCount) // 4회 이상 필터링
+    .sort((a, b) => b[1].lastUsed - a[1].lastUsed) // 전체 히스토리 중 최신 검색 순 정렬
+    .slice(0, 10) // 너무 많지 않게 최대 10개만
+    .map(([cas]) => [cas, h[cas].count]); // 기존 UI 호환을 위해 [CAS, 횟수] 형태로 반환
 }
-
 
 /* ═══════════════════════════════════════════════════════════
    2. 서버 연결 확인
