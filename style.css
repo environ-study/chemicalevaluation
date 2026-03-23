@@ -1,0 +1,453 @@
+/* ============================================================
+   style.css — MSDS 직접입력 분석 포털
+   역할: 레이아웃, 컴포넌트, 색상 테마 전담
+   ============================================================ */
+
+/* ── 폰트 로드 ─────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap');
+
+/* ── 리셋 & 공통 ─────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── CSS 변수 (테마 색상) ────────────────────────────────── */
+:root {
+  --pri:        #1a4b8c;   /* 주 색상 (네이비 블루) */
+  --pri-dark:   #0f2d5a;   /* 헤더/강조 */
+  --pri-light:  #eef3fb;   /* 배경 강조 */
+  --bg:         #f4f6f9;   /* 페이지 배경 */
+  --white:      #fff;
+  --border:     #d0d8e8;
+  --text:       #1a1a2e;
+  --muted:      #6b7280;
+  --r:          6px;       /* border-radius 기본값 */
+  --shadow:     0 2px 12px rgba(26, 75, 140, .10);
+  --red:        #dc2626;
+  --green:      #15803d;
+  --orange:     #ea580c;
+}
+
+body {
+  font-family: 'Noto Sans KR', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ── 헤더 ───────────────────────────────────────────────── */
+header {
+  background: var(--pri-dark);
+}
+.h-inner {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  text-decoration: none;
+}
+.logo-main { font-size: 16px; font-weight: 900; }
+.logo-sub  { font-size: 10px; color: rgba(255,255,255,.65); }
+
+/* ── 히어로 배너 ────────────────────────────────────────── */
+.hero {
+  background: linear-gradient(135deg, var(--pri), var(--pri-dark));
+  padding: 20px;
+  text-align: center;
+  color: #fff;
+}
+.hero h1   { font-size: 19px; font-weight: 900; margin-bottom: 4px; }
+.hero p    { font-size: 12px; opacity: .8; margin-bottom: 8px; }
+.pills     { display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; }
+.pill      {
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,.4);
+  color: #fff;
+}
+
+/* ── 상단 범례 바 (sticky) ──────────────────────────────── */
+.global-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 7px 20px;
+  background: #f8fafd;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.global-legend strong { color: var(--text); }
+
+/* ── 메인 레이아웃 ─────────────────────────────────────── */
+.wrap {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 16px 20px;
+}
+
+/* ── 카드 ───────────────────────────────────────────────── */
+.card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.card-head {
+  background: linear-gradient(90deg, var(--pri), var(--pri-dark));
+  padding: 9px 15px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-body { padding: 14px; }
+
+/* ── 서버 상태 바 ───────────────────────────────────────── */
+.srv-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: var(--r);
+  border: 1px solid #86efac;
+  background: #f0fdf4;
+  margin-bottom: 12px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.srv-bar.warn      { border-color: #fca5a5; background: #fff1f2; }
+#srvTxt            { font-weight: 700; color: var(--green); }
+.srv-bar.warn #srvTxt { color: var(--red); }
+
+/* ── 실행 버튼 ──────────────────────────────────────────── */
+.run-btn {
+  width: 100%;
+  margin-top: 11px;
+  padding: 12px;
+  background: var(--pri);
+  color: #fff;
+  border: none;
+  border-radius: var(--r);
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: .2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.run-btn:hover:not(:disabled) { background: var(--pri-dark); }
+.run-btn:disabled              { background: #94a3b8; cursor: not-allowed; }
+
+/* ── 진행 바 ────────────────────────────────────────────── */
+.prog-wrap { display: none; margin-top: 10px; }
+.prog-bar  {
+  height: 5px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.prog-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--pri), #60a5fa);
+  width: 0%;
+  transition: width .4s;
+  animation: pulse 1.8s infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+.prog-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+  text-align: center;
+}
+
+/* ── MSDS 시트 그리드 (2열) ─────────────────────────────── */
+#msdsSheets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 1100px) { #msdsSheets { grid-template-columns: 1fr; } }
+
+/* ── MSDS 시트 카드 ─────────────────────────────────────── */
+.msds-sheet {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.msds-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f1f5f9;
+  border-bottom: 1px solid var(--border);
+}
+.msds-sheet-head input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+}
+.msds-sheet-head input::placeholder { color: var(--muted); font-weight: 400; }
+.msds-sheet-body { padding: 10px 12px; }
+
+/* ── 시트 삭제 버튼 ────────────────────────────────────── */
+.msds-rm-btn {
+  background: none;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.msds-rm-btn:hover { background: #fee2e2; }
+
+/* ── 시트 추가 버튼 ────────────────────────────────────── */
+.msds-add-row {
+  background: none;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: 11px;
+  width: 100%;
+  margin-top: 6px;
+}
+.msds-add-row:hover { border-color: var(--pri); color: var(--pri); }
+
+/* ── 직접입력 헤더 ──────────────────────────────────────── */
+.manual-header {
+  display: grid;
+  grid-template-columns: 160px 80px 80px auto 34px;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* ── 직접입력 행 ────────────────────────────────────────── */
+.manual-row {
+  display: grid;
+  grid-template-columns: 160px 80px 80px auto 34px;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.manual-row input[type="text"],
+.manual-row input[type="number"] {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: #fff;
+  width: 100%;
+}
+/* 숫자 입력 화살표 제거 */
+.manual-row input[type="number"]               { -moz-appearance: textfield; appearance: textfield; }
+.manual-row input[type="number"]::-webkit-outer-spin-button,
+.manual-row input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+.manual-row input:focus {
+  outline: none;
+  border-color: var(--pri);
+  box-shadow: 0 0 0 2px rgba(26, 75, 140, .1);
+}
+.manual-row .rm-btn {
+  background: none;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+.manual-row .rm-btn:hover { background: #fee2e2; }
+
+/* ── 미만 체크박스 레이블 ──────────────────────────────── */
+.lt-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text);
+}
+.lt-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--orange);
+}
+
+/* ── 결과 테이블 ────────────────────────────────────────── */
+.tbl-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.tbl-wrap table.reg thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: 0 1px 0 var(--border);
+}
+table.reg {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  min-width: 1100px;
+}
+table.reg th {
+  padding: 7px 9px;
+  text-align: center;
+  font-size: 10px;
+  white-space: nowrap;
+  border: 1px solid #1e3a6e;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+table.reg th.th-info { background: #334155; color: #fff; text-align: left; }
+table.reg th.th-kr   { background: #14532d; color: #fff; }
+table.reg th.th-ko   { background: #1a3a6e; color: #fff; }
+table.reg th.th-inp  { background: #44337a; color: #fff; } /* 직접입력 열 */
+
+table.reg td {
+  padding: 6px 9px;
+  border: 1px solid #e2e8f0;
+  vertical-align: middle;
+  text-align: center;
+  font-size: 11px;
+}
+table.reg td.td-nm  { text-align: left; font-weight: 700; background: #f8fafd; min-width: 120px; font-size: 12px; }
+table.reg td.td-cas { font-family: monospace; font-size: 10px; color: #374151; text-align: left; white-space: nowrap; }
+table.reg td.td-num { font-size: 11px; font-weight: 600; }
+
+/* 셀 색상 유틸 */
+.cy  { color: var(--red);    font-weight: 700; background: #fff5f5; }
+.cn  { color: #94a3b8; }
+.cd  { color: #9ca3af; font-style: italic; }
+.ce  { color: #6b7280; font-size: 10px; }
+
+table.reg tr:hover td:not(.td-src) { background: #f5f8ff; }
+table.reg tr.row-sep td            { border-top: 2px solid var(--border); }
+
+/* ── 유해성 태그 ────────────────────────────────────────── */
+.tag-red  { display: inline-block; background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; border-radius: 3px; padding: 0 5px; font-size: 9px; font-weight: 700; margin: 1px; }
+.tag-org  { display: inline-block; background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; border-radius: 3px; padding: 0 5px; font-size: 9px; font-weight: 700; margin: 1px; }
+.tag-yel  { display: inline-block; background: #fef9c3; color: #854d0e; border: 1px solid #fde047; border-radius: 3px; padding: 0 5px; font-size: 9px; font-weight: 700; margin: 1px; }
+.tag-gray { display: inline-block; background: #f1f5f9; color: #475569;  border: 1px solid #cbd5e1; border-radius: 3px; padding: 0 5px; font-size: 9px; margin: 1px; }
+
+/* ── 오류 박스 ──────────────────────────────────────────── */
+.err-box {
+  background: #fff1f2;
+  border: 1px solid #fda4af;
+  border-left: 4px solid var(--red);
+  padding: 12px 15px;
+  border-radius: var(--r);
+  font-size: 13px;
+  color: #9f1239;
+}
+.err-box strong { display: block; margin-bottom: 4px; }
+
+/* ── 원문 토글 ──────────────────────────────────────────── */
+.raw-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-top: 5px;
+}
+.raw-box {
+  background: #1a1a2e;
+  color: #a6e3a1;
+  font-family: monospace;
+  font-size: 10px;
+  padding: 10px;
+  border-radius: 4px;
+  overflow: auto;
+  max-height: 220px;
+  margin-top: 4px;
+  display: none;
+  white-space: pre;
+  line-height: 1.4;
+}
+
+/* ── 안내 팁 박스 ───────────────────────────────────────── */
+.tip {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  padding: 10px 14px;
+  border-radius: var(--r);
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #92400e;
+  line-height: 1.8;
+}
+.tip strong { display: block; margin-bottom: 2px; font-size: 13px; }
+code {
+  font-size: 11px;
+  background: #fef3c7;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+/* ── 섹션 배지 ──────────────────────────────────────────── */
+.sec-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-left: auto;
+}
+.b-red  { background: #fee2e2; color: var(--red);   border: 1px solid #fca5a5; }
+.b-gray { background: #f1f5f9; color: #475569;       border: 1px solid #cbd5e1; }
+
+/* ── 반응형 ─────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .manual-row        { grid-template-columns: 1fr 60px 60px 90px 30px; }
+  .manual-header     { grid-template-columns: 1fr 60px 60px 90px 30px; }
+}
