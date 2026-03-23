@@ -20,7 +20,7 @@
    PROXY: Flask 서버 주소 (배포 시 실제 도메인으로 교체)
    sheetId, rowId: 시트·행 고유 ID 카운터
    ═══════════════════════════════════════════════════════════ */
-const PROXY = 'http://localhost:5000';
+const PROXY = 'https://web-production-01d99.up.railway.app';
 
 let sheetId = 0;   // MSDS 시트 순번
 let rowId   = 0;   // 입력 행 순번
