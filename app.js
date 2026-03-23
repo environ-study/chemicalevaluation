@@ -306,6 +306,26 @@ document.addEventListener('keydown', function(e) {
   if (sid) addManualRow(parseInt(sid), '', null, null, false);
 });
 
+// - 키 → 현재 시트의 비어있는 마지막 행 삭제
+document.addEventListener('keydown', function(e) {
+  if (e.key !== '-') return;
+  const el = document.activeElement;
+  const row = el?.closest('.manual-row');
+  if (!row) return;
+  e.preventDefault();
+  const sid = row.dataset.sheet;
+  if (!sid) return;
+  const rowsDiv = document.getElementById('rows-' + sid);
+  if (!rowsDiv) return;
+  const allRows = [...rowsDiv.querySelectorAll('.manual-row')];
+  // 뒤에서부터 CAS번호가 비어있는 행 찾아서 삭제
+  for (let i = allRows.length - 1; i >= 0; i--) {
+    const id = allRows[i].id?.replace('mrow-', '');
+    const casVal = document.getElementById('cas-' + id)?.value.trim();
+    if (!casVal) { allRows[i].remove(); break; }
+  }
+});
+
 
 /* ═══════════════════════════════════════════════════════════
    6. CAS 번호 자동 하이픈 포맷
