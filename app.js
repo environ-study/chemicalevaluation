@@ -98,6 +98,7 @@ function addMsdsSheet(name) {
   body.className = 'msds-sheet-body';
   body.id = 'sheet-body-' + sid;
   body.innerHTML = `
+    <div class="cas-history-bar" id="cas-hist-${sid}"></div>
     <div class="manual-header">
       <span>CAS번호</span>
       <span>최소(%)</span>
@@ -108,6 +109,7 @@ function addMsdsSheet(name) {
     <div id="rows-${sid}"></div>
     <button class="msds-add-row" onclick="addManualRow(${sid},'',null,null,false)">+ 행 추가</button>
   `;
+  renderCasHistoryBar(sid);
 
   sheet.appendChild(head);
   sheet.appendChild(body);
@@ -143,54 +145,15 @@ function addManualRow(sid, cas, min, max, isLt) {
   row.id = 'mrow-' + id;
   row.dataset.sheet = sid;
 
-  /* CAS 번호 입력 — 래퍼 + 드롭다운 포함 */
-  const casWrap = document.createElement('div');
-  casWrap.className = 'cas-wrap';
-
+  /* CAS 번호 입력 */
   const casInput = document.createElement('input');
   casInput.type = 'text';
   casInput.placeholder = '예: 108-88-3';
   casInput.value = String(cas || '');
   casInput.id = 'cas-' + id;
   casInput.maxLength = 12;
-  casInput.style.width = '100%';
   casInput.setAttribute('oninput', 'onCASInput(this)');
   casInput.setAttribute('autocomplete', 'off');
-
-  // 드롭다운 (3회 이상 검색된 CAS 목록)
-  const dropdown = document.createElement('div');
-  dropdown.className = 'cas-dropdown';
-  dropdown.id = 'cas-dd-' + id;
-  dropdown.style.display = 'none';
-
-  function refreshDropdown(filter) {
-    const freq = getFrequentCas(3);
-    const filtered = filter
-      ? freq.filter(([c]) => c.startsWith(filter))
-      : freq;
-    if (!filtered.length) { dropdown.style.display = 'none'; return; }
-    dropdown.innerHTML = filtered.map(([c, cnt]) =>
-      `<div class="cas-dropdown-item" data-cas="${c}">
-        ${c}<span class="cas-count">${cnt}회</span>
-      </div>`
-    ).join('');
-    dropdown.style.display = 'block';
-    dropdown.querySelectorAll('.cas-dropdown-item').forEach(item => {
-      item.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        casInput.value = item.dataset.cas;
-        onCASInput(casInput);
-        dropdown.style.display = 'none';
-      });
-    });
-  }
-
-  casInput.addEventListener('focus', () => refreshDropdown(casInput.value));
-  casInput.addEventListener('input', () => refreshDropdown(casInput.value));
-  casInput.addEventListener('blur', () => setTimeout(() => { dropdown.style.display = 'none'; }, 150));
-
-  casWrap.appendChild(casInput);
-  casWrap.appendChild(dropdown);
 
   /* 최소 함량 */
   const minInput = document.createElement('input');
@@ -237,7 +200,7 @@ function addManualRow(sid, cas, min, max, isLt) {
   rmBtn.textContent = '✕';
   rmBtn.addEventListener('click', function () { row.remove(); });
 
-  row.appendChild(casWrap);
+  row.appendChild(casInput);
   row.appendChild(minInput);
   row.appendChild(maxInput);
   row.appendChild(label);
@@ -308,6 +271,29 @@ document.addEventListener('keydown', function (e) {
     if (targetEl) { targetEl.focus(); if (targetEl.select) targetEl.select(); }
   }
 });
+
+// CAS 히스토리 바 렌더링 (시트 상단)
+function renderCasHistoryBar(sid) {
+  const bar = document.getElementById('cas-hist-' + sid);
+  if (!bar) return;
+  const freq = getFrequentCas(3);
+  if (!freq.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  bar.innerHTML = '<span class="cas-hist-label">자주 쓴 CAS</span>' +
+    freq.map(([c, cnt]) =>
+      `<button class="cas-hist-btn" onclick="addManualRow(${sid},'${c}',null,null,false);renderCasHistoryBar(${sid})" title="${cnt}회 검색">
+        ${c}
+      </button>`
+    ).join('');
+}
+
+// 모든 시트의 히스토리 바 갱신
+function refreshAllHistoryBars() {
+  document.querySelectorAll('[id^="cas-hist-"]').forEach(el => {
+    const sid = el.id.replace('cas-hist-', '');
+    renderCasHistoryBar(parseInt(sid));
+  });
+}
 
 // + 키 → 현재 포커스된 행의 시트에 행 추가
 document.addEventListener('keydown', function(e) {
@@ -443,7 +429,7 @@ async function doManual() {
     setTimeout(() => { pw.style.display = 'none'; pf.style.width = '0%'; }, 600);
 
     if (!r.ok || d.error) showError(d.error || `HTTP ${r.status}`);
-    else                   renderAll(d);
+    else { renderAll(d); refreshAllHistoryBars(); }
 
   } catch (e) {
     clearInterval(tmr);
