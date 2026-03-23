@@ -109,12 +109,11 @@ function addMsdsSheet(name) {
     <div id="rows-${sid}"></div>
     <button class="msds-add-row" onclick="addManualRow(${sid},'',null,null,false)">+ 행 추가</button>
   `;
-  renderCasHistoryBar(sid);
 
   sheet.appendChild(head);
   sheet.appendChild(body);
   container.appendChild(sheet);
-
+  renderCasHistoryBar(sid);
   /* 첫 행 자동 추가 */
   addManualRow(sid, '', null, null, false);
 }
