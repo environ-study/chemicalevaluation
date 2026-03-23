@@ -356,7 +356,7 @@ table.reg td {
   text-align: center;
   font-size: 11px;
 }
-table.reg td.td-nm  { text-align: left; font-weight: 700; background: #f8fafd; min-width: 120px; font-size: 12px; }
+table.reg td.td-nm  { text-align: left; font-weight: 700; background: #f8fafd; min-width: 120px; max-width: 250px; font-size: 12px; }
 table.reg td.td-cas { font-family: monospace; font-size: 10px; color: #374151; text-align: left; white-space: nowrap; }
 table.reg td.td-num { font-size: 11px; font-weight: 600; }
 
