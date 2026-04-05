@@ -55,7 +55,7 @@ function getFrequentCas(minCount = 4) {
   return Object.entries(h)
     .filter(([, data]) => data.count >= minCount) // 4회 이상 필터링
     .sort((a, b) => b[1].lastUsed - a[1].lastUsed) // 전체 히스토리 중 최신 검색 순 정렬
-    .slice(0, 10) // 너무 많지 않게 최대 10개만
+    .slice(0, 5) // 너무 많지 않게 최대 10개만
     .map(([cas]) => [cas, h[cas].count]); // 기존 UI 호환을 위해 [CAS, 횟수] 형태로 반환
 }
 
@@ -235,53 +235,100 @@ document.addEventListener('keydown', function (e) {
   if (!el.closest('.manual-row')) return;
   if (!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Enter','Tab'].includes(e.key)) return;
 
-  const row      = el.closest('.manual-row');
-  const rowsDiv  = row.parentElement;
-  const allRows  = [...rowsDiv.querySelectorAll('.manual-row')];
-  const inputs   = [...row.querySelectorAll('input')];
-  const colIdx   = inputs.indexOf(el);
-  const rowIdx   = allRows.indexOf(row);
+  const row = el.closest('.manual-row');
+  const rowsDiv = row.parentElement;
+  let allRows = [...rowsDiv.querySelectorAll('.manual-row')];
+  const allInputs = [...row.querySelectorAll('input')];
+
+  // 체크박스 제외한 입력칸만 탐색 대상으로 사용
+  const navInputs = allInputs.filter(input => input.type !== 'checkbox');
+
+  const colIdx = navInputs.indexOf(el);
+  const rowIdx = allRows.indexOf(row);
+
+  // 체크박스에 포커스돼 있으면 이 로직은 적용하지 않음
+  if (el.type === 'checkbox') return;
 
   if (e.key === 'Tab' || e.key === 'Enter') {
-    if (el.type === 'checkbox') return;
     e.preventDefault();
-    const next = inputs[colIdx + 1];
-    if (next) { next.focus(); if (next.select) next.select(); }
-    else {
-      const nextRow = allRows[rowIdx + 1];
-      if (nextRow) {
-        const fi = nextRow.querySelector('input[type="text"],input[type="number"]');
-        if (fi) { fi.focus(); if (fi.select) fi.select(); }
+
+    // 같은 행에서 다음 일반 입력칸으로 이동
+    const next = navInputs[colIdx + 1];
+    if (next) {
+      next.focus();
+      if (next.select) next.select();
+      return;
+    }
+
+    // 현재가 마지막 일반 입력칸(= 최대값)이면 다음 행 CAS로 이동
+    let nextRow = allRows[rowIdx + 1];
+
+    // 다음 행 없으면 새로 생성
+    if (!nextRow) {
+      const sid = parseInt(row.dataset.sheet, 10);
+      if (!sid) return;
+
+      addManualRow(sid, '', null, null, false);
+
+      allRows = [...rowsDiv.querySelectorAll('.manual-row')];
+      nextRow = allRows[rowIdx + 1];
+    }
+
+    if (nextRow) {
+      const firstInput = [...nextRow.querySelectorAll('input')]
+        .find(input => input.type !== 'checkbox');
+
+      if (firstInput) {
+        firstInput.focus();
+        if (firstInput.select) firstInput.select();
       }
     }
     return;
   }
 
-  if (e.key === 'ArrowRight' && el.type !== 'checkbox') {
+  if (e.key === 'ArrowRight') {
     const atEnd = el.type === 'number' ? true : el.selectionStart === el.value.length;
     if (!atEnd) return;
-    const next = inputs[colIdx + 1];
-    if (next && next.type !== 'checkbox') { e.preventDefault(); next.focus(); if (next.select) next.select(); }
+
+    const next = navInputs[colIdx + 1];
+    if (next) {
+      e.preventDefault();
+      next.focus();
+      if (next.select) next.select();
+    }
     return;
   }
-  if (e.key === 'ArrowLeft' && el.type !== 'checkbox') {
+
+  if (e.key === 'ArrowLeft') {
     const atStart = el.type === 'number' ? true : el.selectionStart === 0;
     if (!atStart) return;
-    const prev = inputs[colIdx - 1];
-    if (prev && prev.type !== 'checkbox') {
-      e.preventDefault(); prev.focus();
-      if (prev.type === 'text') { const len = prev.value.length; prev.setSelectionRange(len, len); }
+
+    const prev = navInputs[colIdx - 1];
+    if (prev) {
+      e.preventDefault();
+      prev.focus();
+      if (prev.type === 'text') {
+        const len = prev.value.length;
+        prev.setSelectionRange(len, len);
+      }
     }
     return;
   }
 
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
-    const targetRow    = allRows[rowIdx + (e.key === 'ArrowDown' ? 1 : -1)];
+
+    const targetRow = allRows[rowIdx + (e.key === 'ArrowDown' ? 1 : -1)];
     if (!targetRow) return;
-    const targetInputs = [...targetRow.querySelectorAll('input')];
-    const targetEl     = targetInputs[colIdx] || targetInputs[0];
-    if (targetEl) { targetEl.focus(); if (targetEl.select) targetEl.select(); }
+
+    const targetNavInputs = [...targetRow.querySelectorAll('input')]
+      .filter(input => input.type !== 'checkbox');
+
+    const targetEl = targetNavInputs[colIdx] || targetNavInputs[0];
+    if (targetEl) {
+      targetEl.focus();
+      if (targetEl.select) targetEl.select();
+    }
   }
 });
 
@@ -333,12 +380,283 @@ document.addEventListener('keydown', function(e) {
   const allRows = [...rowsDiv.querySelectorAll('.manual-row')];
   // 뒤에서부터 CAS번호가 비어있는 행 찾아서 삭제
   for (let i = allRows.length - 1; i >= 0; i--) {
-    const id = allRows[i].id?.replace('mrow-', '');
+    const targetRow = allRows[i];
+    const id = targetRow.id?.replace('mrow-', '');
     const casVal = document.getElementById('cas-' + id)?.value.trim();
-    if (!casVal) { allRows[i].remove(); break; }
-  }
-});
 
+    if (!casVal) {
+      const isFocusedRow = targetRow === row;
+
+      // 삭제 대상이 현재 포커스된 행이면 먼저 윗행으로 포커스 이동
+      if (isFocusedRow) {
+        const prevRow = allRows[i - 1];
+        if (prevRow) {
+          const prevInput = [...prevRow.querySelectorAll('input')]
+            .find(input => input.type !== 'checkbox');
+
+          if (prevInput) {
+            prevInput.focus();
+            if (prevInput.select) prevInput.select();
+          }
+        }
+        targetRow.remove();
+        break;
+        }
+      }
+    }
+  });
+
+document.addEventListener('paste', function (e) {
+  const el = e.target;
+  const row = el.closest('.manual-row');
+  if (!row) return;
+
+  const text = e.clipboardData.getData('text/plain').trim();
+  if (!text) return;
+
+  const looksLikeTable =
+    text.includes('\n') || text.includes('\t') || text.includes(',') || /\s{2,}/.test(text);
+
+  if (!looksLikeTable) return;
+
+  e.preventDefault();
+
+  const sid = parseInt(row.dataset.sheet, 10);
+  const rowsDiv = document.getElementById('rows-' + sid);
+  if (!rowsDiv) return;
+
+  const allRows = [...rowsDiv.querySelectorAll('.manual-row')];
+  const startRowIdx = allRows.indexOf(row);
+
+  const currentInputs = [...row.querySelectorAll('input')];
+  const startColIdx = currentInputs.indexOf(el);
+
+  // 핵심: 제목 + 데이터를 같이 파싱
+  const parsed = parsePastedTable(text);
+  const table = parsed.rows || [];
+
+  if (!table.length) return;
+
+  // 첫 줄이 제목이면 시트 제목 input에 반영
+  if (parsed.title) {
+    const titleInput = document.querySelector(`#sheet-${sid} .msds-sheet-head input`);
+    if (titleInput && !titleInput.value.trim()) {
+      titleInput.value = parsed.title;
+    }
+  }
+
+  // 필요 행 수만큼 자동 추가
+  const neededRows = startRowIdx + table.length;
+  while (rowsDiv.querySelectorAll('.manual-row').length < neededRows) {
+    addManualRow(sid, '', null, null, false);
+  }
+
+  const updatedRows = [...rowsDiv.querySelectorAll('.manual-row')];
+
+  // 셀 채우기
+  table.forEach((cols, rIdx) => {
+    const targetRow = updatedRows[startRowIdx + rIdx];
+    if (!targetRow) return;
+
+    const inputs = [...targetRow.querySelectorAll('input')];
+
+    cols.forEach((rawValue, cIdx) => {
+      const colIdx = startColIdx + cIdx;
+      const input = inputs[colIdx];
+      if (!input) return;
+
+      const value = (rawValue || '').trim();
+
+      if (input.type === 'checkbox') {
+        const v = value.toLowerCase();
+        const isLt =
+          v === '미만' ||
+          v === '<' ||
+          v === 'lt' ||
+          v === 'less' ||
+          v === 'less than';
+
+        input.checked = isLt;
+        input.dispatchEvent(new Event('change'));
+        return;
+      }
+
+      // 숫자칸이면 숫자만 정리
+      if (input.type === 'number') {
+        const normalized = value.replace(/[^\d.\-]/g, '');
+        input.value = normalized;
+        return;
+      }
+
+      input.value = value;
+
+      if (input.id.startsWith('cas-')) {
+        onCASInput(input);
+      }
+    });
+  });
+});
+// 붙여넣기 텍스트를 2차원 배열로 변환
+function parsePastedTable(text) {
+  const lines = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return { title: '', rows: [] };
+
+  let title = '';
+  let startIdx = 0;
+
+  // 첫 줄이 제목인지 판별
+  // 조건:
+  // - 쉼표/탭이 없음
+  // - CAS + 숫자열 데이터 패턴이 아님
+  // - 글자가 하나라도 있음
+  if (isTitleLine(lines[0])) {
+    title = lines[0];
+    startIdx = 1;
+  }
+
+  const rows = lines
+    .slice(startIdx)
+    .map(parseFlexibleLine)
+    .filter(row => row.length > 0);
+
+  return { title, rows };
+}
+
+function isTitleLine(line) {
+  const s = (line || '').trim();
+  if (!s) return false;
+
+  // 탭/쉼표 있으면 일단 데이터 가능성이 높음
+  if (s.includes('\t') || s.includes(',')) return false;
+
+  // 한 줄 전체가 CAS + 숫자 + 숫자 형태면 제목 아님
+  if (looksLikeDataLine(s)) return false;
+
+  // 숫자만 있는 줄도 제목 아님
+  if (/^[\d.\-\s]+$/.test(s)) return false;
+
+  // 한글/영문이 포함되어 있고 데이터 형식이 아니면 제목으로 간주
+  return /[A-Za-z가-힣]/.test(s);
+}
+
+function looksLikeDataLine(line) {
+  const parsed = parseFlexibleLine(line);
+  if (parsed.length < 2) return false;
+
+  const casCandidate = parsed[0];
+  const num1 = parsed[1];
+  const num2 = parsed[2];
+
+  const casOk = isCasLike(casCandidate);
+  const n1Ok = isNumericLike(num1);
+  const n2Ok = num2 == null ? true : isNumericLike(num2);
+
+  return casOk && n1Ok && n2Ok;
+}
+
+function parseFlexibleLine(line) {
+  const s = (line || '').trim();
+  if (!s) return [];
+
+  // 1) CSV
+  if (s.includes(',')) {
+    return parseCsvLine(s).map(v => v.trim()).filter(Boolean);
+  }
+
+  // 2) 탭 있으면 먼저 탭 기준 분리 후, 각 칸 내부의 다중공백도 추가 분리
+  if (s.includes('\t')) {
+    const parts = s
+      .split('\t')
+      .map(v => v.trim())
+      .filter(Boolean);
+
+    let expanded = [];
+    for (const part of parts) {
+      // "13    20" 같이 탭 뒤에 공백 여러 칸이면 추가 분리
+      if (/\s{2,}/.test(part)) {
+        expanded.push(...part.split(/\s{2,}/).map(v => v.trim()).filter(Boolean));
+      } else {
+        expanded.push(part);
+      }
+    }
+    return normalizeRow(expanded);
+  }
+
+  // 3) 공백만 있는 경우: 2칸 이상 우선, 없으면 1칸 이상
+  let parts;
+  if (/\s{2,}/.test(s)) {
+    parts = s.split(/\s{2,}/).map(v => v.trim()).filter(Boolean);
+  } else {
+    parts = s.split(/\s+/).map(v => v.trim()).filter(Boolean);
+  }
+
+  return normalizeRow(parts);
+}
+
+function normalizeRow(parts) {
+  if (!parts.length) return [];
+
+  const row = [...parts];
+
+  // 케이스:
+  // ["108883", "13", "20"] -> 그대로
+  // ["108-88-3", "13", "20"] -> 그대로
+  // ["108883", "1320"] 같은 건 손대지 않음
+  // ["108883", "13", "20", "미만"] -> 그대로 앞 4개 사용 가능
+
+  return row;
+}
+
+function isCasLike(value) {
+  const v = String(value || '').trim();
+  const digits = v.replace(/\D/g, '');
+  return digits.length >= 5 && digits.length <= 10;
+}
+
+function isNumericLike(value) {
+  if (value == null) return false;
+  return /^-?\d+(?:\.\d+)?$/.test(String(value).trim());
+}
+// CSV 한 줄 파싱
+// 쉼표 안의 따옴표("...") 처리
+function parseCsvLine(line) {
+  const result = [];
+  let cur = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const next = line[i + 1];
+
+    if (ch === '"') {
+      // "" -> 따옴표 이스케이프
+      if (inQuotes && next === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === ',' && !inQuotes) {
+      result.push(cur.trim());
+      cur = '';
+      continue;
+    }
+
+    cur += ch;
+  }
+
+  result.push(cur.trim());
+  return result;
+}
 
 /* ═══════════════════════════════════════════════════════════
    6. CAS 번호 자동 하이픈 포맷
@@ -392,6 +710,7 @@ async function doManual() {
 
   /* 입력값 수집 */
   const payload = [];
+  const dedupeMap = new Map();
   for (const sheet of sheets) {
     const sid      = sheet.id.replace('sheet-', '');
     const nameEl   = sheet.querySelector('.msds-sheet-head input');
@@ -410,7 +729,7 @@ async function doManual() {
       const maxV   = maxRaw !== '' ? parseFloat(maxRaw) : null;
       const isLt   = document.getElementById('lt-' + id)?.checked || false;
       recordCas(cas);   // 히스토리 기록
-      comps.push({
+      const compObj = {
         cas_no:       cas,
         ke_no:        '',
         함량원문:     buildRawText(minV, maxV, isLt),
@@ -418,7 +737,22 @@ async function doManual() {
         함량최대:     maxV,
         최대포함여부: !isLt,
         최소포함여부: true,
-      });
+      };
+
+
+// 시트 내 중복 제거 키
+const dedupeKey = [
+  filename,
+  cas,
+  minV ?? '',
+  maxV ?? '',
+  !isLt ? 'incl' : 'lt'
+].join('|');
+
+if (!dedupeMap.has(dedupeKey)) {
+  dedupeMap.set(dedupeKey, true);
+  comps.push(compObj);
+}
     }
     if (comps.length) payload.push({ filename, comps });
   }
