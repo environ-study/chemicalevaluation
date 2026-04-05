@@ -9,52 +9,86 @@
 <body>
 
 <div class="hero">
-  <h1>✏️ MSDS 직접입력 분석</h1>
-  <p>CAS번호와 함량을 직접 입력하여 화관법(K-REACH) · 산안법(KOSHA) 규제 여부를 즉시 조회합니다.</p>
-  <div class="pills">
-    <span class="pill">화평법 K-REACH</span>
-    <span class="pill">산업안전보건법 KOSHA</span>
-    <span class="pill">유해화학물질 판정</span>
-    <span class="pill">금지·특별관리물질</span>
+  <div class="hero-top">
+    <div class="hero-main">
+      <h1>✏️ MSDS 직접입력 분석</h1>
+      <p>CAS번호와 함량을 직접 입력하여 화관법(K-REACH) · 산안법(KOSHA) 규제 여부를 즉시 조회합니다.</p>
+      <div class="pills">
+        <span class="pill">화평법 K-REACH</span>
+        <span class="pill">산업안전보건법 KOSHA</span>
+        <span class="pill">유해화학물질 판정</span>
+        <span class="pill">금지·특별관리물질</span>
+      </div>
+    </div>
+
+    <div class="hero-help-row">
+      <div class="hero-help-card">
+        <button type="button" class="hero-help-trigger">💡 사용 방법</button>
+        <div class="hero-help-box">
+          <strong>사용 방법</strong>
+          <div class="hero-help-body">
+            ① 시트 추가 → ② CAS번호·함량 입력 → ③ 분석 실행<br>
+            <code>Tab</code> · <code>Enter</code> · <code>↑↓←→</code> 키로 셀 이동<br>
+            <code>Enter/Tab</code>으로 최대값 입력 후 다음 행 자동 생성<br>
+            <code>+</code> 행 추가 &nbsp;·&nbsp; <code>-</code> 빈 마지막 행 삭제<br>
+            MSDS명 포함 텍스트 복붙 시 제목 + 구성성분 자동 입력<br>
+            자주 쓴 CAS번호는 시트 상단 버튼으로 클릭 입력 (3회↑ 자동등록)
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-help-card">
+        <button type="button" class="hero-help-trigger">📌 범례</button>
+        <div class="hero-help-box white-theme">
+          <strong>범례</strong>
+          <div class="hero-help-body" style="display:flex;flex-direction:column;gap:4px;">
+            <span><b style="color:#dc2626">완전금지</b> — 금지물질 (함량 무관)</span>
+            <span><span class="tag-org">규제</span> — 유독·허가·제한·사고대비</span>
+            <span><span class="tag-yel">기준%</span> — 인체등유해성물질</span>
+            <span><span class="tag-gray">기존화학</span> — KE번호 보유</span>
+            <span><b style="color:#ea580c">미만</b>(&lt;) / <b>이하</b>(≤) — 최대값 포함 여부</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-help-card">
+        <button type="button" class="hero-help-trigger">📝 업데이트</button>
+        <div class="hero-help-box white-theme">
+          <strong>update내역</strong>
+          <div class="hero-help-body">
+            <div><b>ver1.</b> 26.03.23</div>
+            <div style="margin:4px 0 10px 0;color:var(--muted);font-size:12px;">
+              직접입력 기반 K-REACH · KOSHA 조회 기능 적용
+            </div>
+
+            <div><b>ver2.</b> 26.04.04</div>
+            <div style="margin-top:4px;display:flex;flex-direction:column;gap:4px;font-size:12px;">
+              <span>- Enter/Tab으로 최대값 입력 후 다음 행 자동 생성</span>
+              <span>- 첫 줄 MSDS명 포함 텍스트 복붙 시 시트명 자동 입력</span>
+              <span>- 탭/공백 혼합 데이터 복붙 시 최소/최대 함량 자동 분리 개선</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
 <div class="wrap">
 
   <!-- 1행 3열: 서버상태 / 사용방법 / 범례 -->
-  <div class="info-row">
+<!-- 1행: 서버상태 + 도움말 툴팁 버튼 -->
+<div class="info-row compact-info-row">
 
-    <!-- 1열: 서버 상태 (초록) -->
-    <div class="tip tip-green">
-      <strong>🔌 서버 상태</strong>
-      <div style="margin-top:8px;font-size:13px;font-weight:700" id="srvBar">
-        <span id="srvTxt">확인 중...</span>
-      </div>
+  <!-- 서버 상태 -->
+  <div class="tip tip-green">
+    <strong>🔌 서버 상태</strong>
+    <div style="margin-top:8px;font-size:13px;font-weight:700" id="srvBar">
+      <span id="srvTxt">확인 중...</span>
     </div>
-
-    <!-- 2열: 사용 방법 (노랑) -->
-    <div class="tip">
-      <strong>💡 사용 방법</strong>
-      ① 시트 추가 → ② CAS번호·함량 입력 → ③ 분석 실행<br>
-      <code>Tab</code> · <code>Enter</code> · <code>↑↓←→</code> 키로 셀 이동<br>
-      <code>+</code> 행 추가 &nbsp;·&nbsp; <code>-</code> 빈 마지막 행 삭제<br>
-      자주 쓴 CAS번호는 시트 상단 버튼으로 클릭 입력 (3회↑ 자동등록)
-    </div>
-
-    <!-- 3열: 범례 (흰색) -->
-    <div class="tip tip-white">
-      <strong>📌 범례</strong>
-      <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:12px">
-        <span><b style="color:#dc2626">완전금지</b> — 금지물질 (함량 무관)</span>
-        <span><span class="tag-org">규제</span> — 유독·허가·제한·사고대비</span>
-        <span><span class="tag-yel">기준%</span> — 인체등유해성물질</span>
-        <span><span class="tag-gray">기존화학</span> — KE번호 보유</span>
-        <span><b style="color:#ea580c">미만</b>(&lt;) / <b>이하</b>(≤) — 최대값 포함 여부</span>
-      </div>
-    </div>
-
   </div>
 
+</div>
   <!-- 입력 카드 -->
   <div class="card">
     <div class="card-head">
