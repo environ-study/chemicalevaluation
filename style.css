@@ -455,11 +455,13 @@ code {
 /* ── 1행 3열: 서버상태 / 사용방법 / 범례 ──────────── */
 .info-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   margin-bottom: 14px;
+  max-width: 1100px;
+  margin-right: auto;
 }
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .info-row { grid-template-columns: 1fr; }
 }
 .info-row .tip {
@@ -516,4 +518,280 @@ code {
   background: var(--pri);
   color: #fff;
   border-color: var(--pri);
+}
+/* ── compact info row ───────────────────────────── */
+.compact-info-row {
+  grid-template-columns: 1.2fr .8fr;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .compact-info-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── hover help buttons / tooltip ───────────────── */
+.hover-help-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.hover-help-card {
+  position: relative;
+}
+
+.hover-help-trigger {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--pri-dark);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: .15s;
+}
+
+.hover-help-trigger:hover {
+  background: var(--pri);
+  color: #fff;
+  border-color: var(--pri);
+}
+
+.hover-help-box {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 320px;
+  max-width: 420px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  border-radius: var(--r);
+  box-shadow: 0 10px 28px rgba(15, 45, 90, .16);
+  padding: 12px 14px;
+  font-size: 12px;
+  color: #92400e;
+  line-height: 1.7;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: .18s ease;
+  z-index: 200;
+}
+
+.hover-help-box strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.hover-help-box.white-theme {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--pri);
+  color: var(--text);
+}
+
+.hover-help-body {
+  font-size: 12px;
+}
+
+.hover-help-card:hover .hover-help-box,
+.hover-help-card:focus-within .hover-help-box {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+@media (max-width: 640px) {
+  .hover-help-row {
+    flex-direction: column;
+  }
+
+  .hover-help-box {
+    position: static;
+    min-width: auto;
+    max-width: none;
+    margin-top: 8px;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    display: none;
+  }
+
+  .hover-help-card:hover .hover-help-box,
+  .hover-help-card:focus-within .hover-help-box {
+    display: block;
+  }
+}
+
+/* ── hero 상단 구조 ───────────────────────────── */
+.hero-top {
+  max-width: 1300px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  text-align: left;
+}
+
+.hero-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.hero-main h1 {
+  font-size: 19px;
+  font-weight: 900;
+  margin-bottom: 4px;
+}
+
+.hero-main p {
+  font-size: 12px;
+  opacity: .85;
+  margin-bottom: 8px;
+}
+
+/* ── hero 도움말 pill 버튼 ───────────────────── */
+.hero-help-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-start;
+  position: relative;
+}
+
+.hero-help-card {
+  position: relative;
+}
+
+.hero-help-trigger {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,.45);
+  background: rgba(255,255,255,.08);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: .15s;
+  white-space: nowrap;
+}
+
+.hero-help-trigger:hover,
+.hero-help-card:focus-within .hero-help-trigger {
+  background: rgba(255,255,255,.18);
+  border-color: rgba(255,255,255,.7);
+}
+
+/* ── hero tooltip 박스 ───────────────────────── */
+.hero-help-box {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 320px;
+  max-width: 420px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  border-radius: var(--r);
+  box-shadow: 0 10px 28px rgba(15, 45, 90, .18);
+  padding: 12px 14px;
+  font-size: 12px;
+  color: #92400e;
+  line-height: 1.7;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: .18s ease;
+  z-index: 300;
+  text-align: left;
+}
+
+.hero-help-box strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.hero-help-box.white-theme {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--pri);
+  color: var(--text);
+}
+
+.hero-help-body {
+  font-size: 12px;
+}
+
+.hero-help-card:hover .hero-help-box,
+.hero-help-card:focus-within .hero-help-box {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* ── 서버상태 한 줄만 ────────────────────────── */
+.info-row-single {
+  grid-template-columns: 1fr;
+}
+
+/* ── 모바일 대응 ─────────────────────────────── */
+@media (max-width: 900px) {
+  .hero-top {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .hero-help-row {
+    justify-content: center;
+  }
+
+  .hero-help-box {
+    right: auto;
+    left: 50%;
+    transform: translate(-50%, 6px);
+  }
+
+  .hero-help-card:hover .hero-help-box,
+  .hero-help-card:focus-within .hero-help-box {
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-help-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero-help-trigger {
+    width: 100%;
+  }
+
+  .hero-help-box {
+    position: static;
+    min-width: auto;
+    max-width: none;
+    margin-top: 8px;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    display: none;
+  }
+
+  .hero-help-card:hover .hero-help-box,
+  .hero-help-card:focus-within .hero-help-box {
+    display: block;
+  }
 }
