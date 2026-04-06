@@ -431,13 +431,43 @@ document.addEventListener('paste', function (e) {
   const currentInputs = [...row.querySelectorAll('input')];
   const startColIdx = currentInputs.indexOf(el);
 
-  // 핵심: 제목 + 데이터를 같이 파싱
+  // 1) 세로 나열 다중 MSDS 먼저 판별
+  const multiBlocks = parseVerticalMultiMsds(text);
+
+  // 다중 MSDS인 경우:
+  // - 첫 번째 블록은 현재 시트
+  // - 두 번째부터는 새 시트 자동 생성
+  if (multiBlocks.length >= 2) {
+    multiBlocks.forEach((block, idx) => {
+      let targetSid;
+
+      if (idx === 0) {
+        targetSid = sid;
+
+        const titleInput = document.querySelector(`#sheet-${targetSid} .msds-sheet-head input`);
+        if (titleInput && !titleInput.value.trim() && block.title) {
+          titleInput.value = block.title;
+        }
+
+        fillSheetRows(targetSid, block.rows, startRowIdx, startColIdx);
+      } else {
+        addMsdsSheet(block.title || '');
+        targetSid = sheetId;
+
+        // 새 시트는 기본 1행이 이미 생성되므로 0행부터 채우면 됨
+        fillSheetRows(targetSid, block.rows, 0, 0);
+      }
+    });
+
+    return;
+  }
+
+  // 2) 단일 MSDS는 기존 로직대로 처리
   const parsed = parsePastedTable(text);
   const table = parsed.rows || [];
 
   if (!table.length) return;
 
-  // 첫 줄이 제목이면 시트 제목 input에 반영
   if (parsed.title) {
     const titleInput = document.querySelector(`#sheet-${sid} .msds-sheet-head input`);
     if (titleInput && !titleInput.value.trim()) {
@@ -445,16 +475,113 @@ document.addEventListener('paste', function (e) {
     }
   }
 
-  // 필요 행 수만큼 자동 추가
-  const neededRows = startRowIdx + table.length;
+  fillSheetRows(sid, table, startRowIdx, startColIdx);
+});
+
+// 세로 나열된 다중 MSDS 붙여넣기 파서
+// 예:
+// Sample MSDS
+// 108883 13 20
+// 1330207 1 8
+// Sample MSDS2
+// 13463677 13 20
+// 1316297 1 8
+function parseVerticalMultiMsds(text) {
+  const lines = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return [];
+
+  const blocks = [];
+  let current = null;
+
+  for (const line of lines) {
+    // 제목줄이면 새 블록 시작
+    if (isTitleLine(line)) {
+      if (current && current.rows.length) {
+        blocks.push(current);
+      }
+      current = {
+        title: line,
+        rows: []
+      };
+      continue;
+    }
+
+    // 데이터줄
+    const parsed = parseFlexibleLine(line);
+
+    if (looksLikeParsedDataRow(parsed)) {
+      // 제목 없이 데이터가 먼저 나오면 현재 블록 생성
+      if (!current) {
+        current = {
+          title: '',
+          rows: []
+        };
+      }
+
+      current.rows.push(normalizeDataRow(parsed));
+    }
+  }
+
+  // 마지막 블록 마무리
+  if (current && current.rows.length) {
+    blocks.push(current);
+  }
+
+  // 제목 2개 이상이거나, 제목 있는 블록이 2개 이상일 때만 "다중 MSDS"로 인정
+  const titledCount = blocks.filter(b => (b.title || '').trim()).length;
+  if (blocks.length >= 2 && titledCount >= 2) {
+    return blocks;
+  }
+
+  return [];
+}
+
+// parseFlexibleLine 결과가 데이터 행인지 판별
+function looksLikeParsedDataRow(parsed) {
+  if (!Array.isArray(parsed) || parsed.length < 2) return false;
+
+  const cas = parsed[0];
+  const min = parsed[1];
+  const max = parsed[2];
+
+  if (!isCasLike(cas)) return false;
+  if (!isNumericLike(min)) return false;
+  if (max != null && max !== '' && !isNumericLike(max)) return false;
+
+  return true;
+}
+
+// 데이터 행을 [cas, min, max, 미만여부?] 형태로 정리
+function normalizeDataRow(parsed) {
+  const row = [...parsed];
+
+  const cas = row[0] ?? '';
+  const min = row[1] ?? '';
+  const max = row[2] ?? '';
+  const flag = row[3] ?? '';
+
+  return [cas, min, max, flag];
+}
+
+// 특정 시트에 rows 데이터를 채워 넣기
+function fillSheetRows(sid, rows, startRowIdx = 0, startColIdx = 0) {
+  const rowsDiv = document.getElementById('rows-' + sid);
+  if (!rowsDiv) return;
+
+  const neededRows = startRowIdx + rows.length;
   while (rowsDiv.querySelectorAll('.manual-row').length < neededRows) {
     addManualRow(sid, '', null, null, false);
   }
 
   const updatedRows = [...rowsDiv.querySelectorAll('.manual-row')];
 
-  // 셀 채우기
-  table.forEach((cols, rIdx) => {
+  rows.forEach((cols, rIdx) => {
     const targetRow = updatedRows[startRowIdx + rIdx];
     if (!targetRow) return;
 
@@ -481,7 +608,6 @@ document.addEventListener('paste', function (e) {
         return;
       }
 
-      // 숫자칸이면 숫자만 정리
       if (input.type === 'number') {
         const normalized = value.replace(/[^\d.\-]/g, '');
         input.value = normalized;
@@ -495,7 +621,8 @@ document.addEventListener('paste', function (e) {
       }
     });
   });
-});
+}
+
 // 붙여넣기 텍스트를 2차원 배열로 변환
 function parsePastedTable(text) {
   const lines = text
