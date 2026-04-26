@@ -1237,21 +1237,18 @@ function isRegulated(comp) {
   const kr = comp.kreach || {};
   const ko = comp.kosha  || {};
 
-  // 1. 데이터 부재/신규물질: 보수적으로 규제대상 간주
+  // 1. 신규물질: K-REACH 미등록 (피드백5)
   if (!kr || (kr.not_found && kr['금지'] !== 'Y')) return true;
+  // KOSHA 미등록도 신규로 간주
   if (!ko || ko.not_found) return true;
 
-  // 2. 무조건 규제 (Binary): 존재만으로 규제
-  // 화평법: 금지, 제한, 유해판정 / 산안법: 금지, 특별관리
-  if (kr['금지'] === 'Y' || kr['제한'] === 'Y' || kr['유해판정'] === 'Y') return true;
+  // 2. 함량 무관 규제 (Binary) — 해당만으로 규제
+  if (kr['금지'] === 'Y' || kr['유독'] === 'Y' || kr['허가'] === 'Y' || kr['제한'] === 'Y') return true;
   if (ko['금지'] === 'Y' || ko['특별관리'] === 'Y') return true;
 
-  // 3. 기준치 판별 (Threshold): 유독, 허가, 사고대비
-  // 해당 항목 중 하나라도 '초과'가 true인 경우에만 규제로 판별
-  if (['유독', '허가', '사고대비'].some(key => kr[key] === 'Y')) {
-    const tbl = kr['유해_기준표'] || [];
-    if (tbl.some(r => r['초과'] === true)) return true;
-  }
+  // 3. 기준치 규제 — 초과 시에만 규제 (피드백6: 미달은 제외)
+  const tbl = kr['유해_기준표'] || [];
+  if (tbl.some(r => r['초과'] === true)) return true;
 
   return false;
 }
@@ -1307,42 +1304,37 @@ function copyResultsAsText(regulatedOnly = false) {
       if (!kr || kr.not_found) {
         krParts.push('신규화학물질');
       } else if (!kr.error) {
+        const tbl = kr['유해_기준표'] || [];
+
         if (kr['금지'] === 'Y') {
+          // 피드백2: 화평법 금지물질
           krParts.push('화평법 금지물질');
+
+        } else if (kr['유독'] === 'Y') {
+          krParts.push('유해화학물질 (유독물질)');
+
+        } else if (kr['허가'] === 'Y') {
+          krParts.push('유해화학물질 (허가물질)');
+
+        } else if (kr['제한'] === 'Y') {
+          krParts.push('유해화학물질 (제한물질)');
+
+        } else if (kr['사고대비'] === 'Y') {
+          // 피드백1: 기준 초과 시에만 표시, 미달은 제외(피드백6)
+          const saRow = tbl.find(r => r['카테고리'] === '사고대비');
+          if (saRow && saRow['초과'] === true) {
+            krParts.push(`사고대비물질 규제기준 ${saRow['기준값']}% 이상 초과`);
+          }
+          // 미달이면 아무것도 추가하지 않음
+
         } else {
-          // 함량무관 규제 (제한/유해판정)
-          if (kr['제한'] === 'Y') krParts.push('유해화학물질 (제한물질)');
-          if (kr['유해판정'] === 'Y') krParts.push('유해성심사 완료물질');
-
-          // 기준치 판별 규제 (유독/허가/사고대비)
-          const tbl = kr['유해_기준표'] || [];
-          const thresholdRegs = [];
-          if (kr['유독'] === 'Y') thresholdRegs.push('유독물질');
-          if (kr['허가'] === 'Y') thresholdRegs.push('허가물질');
-          
-          if (thresholdRegs.length) {
-            const exceeded = tbl.filter(r => r['초과'] === true && ['유독', '허가'].includes(r['카테고리']));
-            if (exceeded.length) {
-              const minThr = Math.min(...exceeded.map(r => r['기준값']));
-              krParts.push(`유해화학물질 (${thresholdRegs.join(', ')}) 규제기준 ${minThr}% 이상 초과`);
-            } else {
-              const minThr = Math.min(...tbl.filter(r => ['유독', '허가'].includes(r['카테고리'])).map(r => r['기준값']));
-              krParts.push(`유해화학물질 (${thresholdRegs.join(', ')}) 규제기준 ${isNaN(minThr) ? '' : minThr + '%'} 미달`);
-            }
-          }
-
-          // 사고대비물질 별도 처리
-          if (kr['사고대비'] === 'Y') {
-            const saRow = tbl.find(r => r['카테고리'] === '사고대비');
-            if (saRow) {
-              krParts.push(`사고대비물질 규제기준 ${saRow['기준값']}% ${saRow['초과'] ? '이상 초과' : '미달'}`);
-            } else {
-              krParts.push(kr['사고대비_기준'] ? `사고대비물질 (${kr['사고대비_기준']})` : '사고대비물질');
-            }
-          }
-
-          // 아무 규제도 없는데 기존화학물질인 경우
-          if (krParts.length === 0 && kr['기존화학_ke']) {
+          // 인체등유해성물질: 기준표 초과 시에만 표시, 미달은 제외(피드백6)
+          const exceeded = tbl.filter(r => r['초과'] === true);
+          if (exceeded.length) {
+            const minThr = Math.min(...exceeded.map(r => r['기준값']));
+            krParts.push(`유해화학물질 규제기준 ${minThr}% 이상 초과`);
+          } else if (kr['기존화학_ke']) {
+            // 피드백3: 규제가 없고 기존화학만인 경우 → 병합로직에서 처리
             krParts.push('__기존__');
           }
         }
@@ -1379,8 +1371,23 @@ function copyResultsAsText(regulatedOnly = false) {
     blocks.push(lines.join('\n'));
   });
 
-  return blocks.join('\n\n---\n\n');
-  
+  const text    = blocks.join('\n\n');
+  const btnId   = regulatedOnly ? 'copyRegulatedBtn' : 'copyResultBtn';
+  const origTxt = regulatedOnly ? '⚠️ 규제대상만 복사' : '📋 전체 결과 복사';
+  const btn     = document.getElementById(btnId);
+
+  const onDone = () => {
+    if (btn) {
+      btn.textContent = '✅ 복사됨!';
+      setTimeout(() => { btn.textContent = origTxt; }, 1800);
+    }
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(onDone).catch(() => fallbackCopy(text, onDone));
+  } else {
+    fallbackCopy(text, onDone);
+  }
 }
 
 
