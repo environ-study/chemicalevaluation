@@ -251,7 +251,7 @@ header {
 /* ── 직접입력 헤더 ──────────────────────────────────────── */
 .manual-header {
   display: grid;
-  grid-template-columns: 1fr 70px 70px 110px 34px;
+  grid-template-columns: 22px 1fr 70px 70px 110px 34px;
   gap: 6px;
   margin-bottom: 4px;
   font-size: 11px;
@@ -262,10 +262,21 @@ header {
 /* ── 직접입력 행 ────────────────────────────────────────── */
 .manual-row {
   display: grid;
-  grid-template-columns: 1fr 70px 70px 110px 34px;
+  grid-template-columns: 22px 1fr 70px 70px 110px 34px;
   gap: 6px;
   align-items: center;
   margin-bottom: 6px;
+}
+
+/* ── 행 번호 ────────────────────────────────────────────── */
+.row-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1;
+  padding-top: 2px;
+  user-select: none;
 }
 .manual-row input[type="text"],
 .manual-row input[type="number"] {
@@ -374,6 +385,23 @@ table.reg tr.row-sep td            { border-top: 2px solid var(--border); }
 .tag-org  { display: inline-block; background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; border-radius: 3px; padding: 0 5px; font-size: 9px; font-weight: 700; margin: 1px; }
 .tag-yel  { display: inline-block; background: #fef9c3; color: #854d0e; border: 1px solid #fde047; border-radius: 3px; padding: 0 5px; font-size: 9px; font-weight: 700; margin: 1px; }
 .tag-gray { display: inline-block; background: #f1f5f9; color: #475569;  border: 1px solid #cbd5e1; border-radius: 3px; padding: 0 5px; font-size: 9px; margin: 1px; }
+.tag-new  { display: inline-block; background: #eff6ff; color: #1d4ed8;  border: 1px solid #93c5fd; border-radius: 3px; padding: 0 5px; font-size: 9px; font-weight: 700; margin: 1px; }
+
+/* ── 결과 복사 버튼 ─────────────────────────────────────── */
+.copy-result-btn {
+  background: linear-gradient(90deg, var(--pri), var(--pri-dark));
+  color: #fff;
+  border: none;
+  border-radius: var(--r);
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: .2s;
+  white-space: nowrap;
+}
+.copy-result-btn:hover { opacity: .88; }
 
 /* ── 오류 박스 ──────────────────────────────────────────── */
 .err-box {
@@ -448,8 +476,8 @@ code {
 
 /* ── 반응형 ─────────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .manual-row        { grid-template-columns: 1fr 60px 60px 90px 30px; }
-  .manual-header     { grid-template-columns: 1fr 60px 60px 90px 30px; }
+  .manual-row        { grid-template-columns: 18px 1fr 60px 60px 90px 30px; }
+  .manual-header     { grid-template-columns: 18px 1fr 60px 60px 90px 30px; }
 }
 
 /* ── 1행 3열: 서버상태 / 사용방법 / 범례 ──────────── */
