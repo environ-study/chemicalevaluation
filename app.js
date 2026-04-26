@@ -20,10 +20,11 @@
    PROXY: Flask 서버 주소 (배포 시 실제 도메인으로 교체)
    sheetId, rowId: 시트·행 고유 ID 카운터
    ═══════════════════════════════════════════════════════════ */
-const PROXY = 'https://chemicalevaluation-api.onrender.com';
+const PROXY = 'http://127.0.0.1:5000';
 
 let sheetId = 0;   // MSDS 시트 순번
 let rowId   = 0;   // 입력 행 순번
+let lastResultData = null;  // 마지막 분석 결과 (텍스트 복사용)
 
 // CAS 검색 히스토리 (localStorage 기반)
 const CAS_HISTORY_KEY = 'cas_history';
@@ -114,6 +115,7 @@ function addMsdsSheet(name) {
   body.innerHTML = `
     <div class="cas-history-bar" id="cas-hist-${sid}"></div>
     <div class="manual-header">
+      <span>#</span>
       <span>CAS번호</span>
       <span>최소(%)</span>
       <span>최대(%)</span>
@@ -137,6 +139,16 @@ function removeMsdsSheet(sid) {
   if (el) el.remove();
 }
 
+/* 시트 내 행 번호 일괄 갱신 */
+function renumberSheet(sid) {
+  const rowsDiv = document.getElementById('rows-' + sid);
+  if (!rowsDiv) return;
+  [...rowsDiv.querySelectorAll('.manual-row')].forEach((row, i) => {
+    const el = row.querySelector('.row-num');
+    if (el) el.textContent = i + 1;
+  });
+}
+
 
 /* ═══════════════════════════════════════════════════════════
    4. 직접입력 행 관리
@@ -157,6 +169,11 @@ function addManualRow(sid, cas, min, max, isLt) {
   row.className = 'manual-row';
   row.id = 'mrow-' + id;
   row.dataset.sheet = sid;
+
+  /* 행 번호 */
+  const numSpan = document.createElement('span');
+  numSpan.className = 'row-num';
+  numSpan.textContent = '·';
 
   /* CAS 번호 입력 */
   const casInput = document.createElement('input');
@@ -211,14 +228,16 @@ function addManualRow(sid, cas, min, max, isLt) {
   rmBtn.className = 'rm-btn';
   rmBtn.title = '삭제';
   rmBtn.textContent = '✕';
-  rmBtn.addEventListener('click', function () { row.remove(); });
+  rmBtn.addEventListener('click', function () { row.remove(); renumberSheet(sid); });
 
+  row.appendChild(numSpan);
   row.appendChild(casInput);
   row.appendChild(minInput);
   row.appendChild(maxInput);
   row.appendChild(label);
   row.appendChild(rmBtn);
   container.appendChild(row);
+  renumberSheet(sid);
 }
 
 
@@ -477,6 +496,7 @@ document.addEventListener('paste', function (e) {
 
   fillSheetRows(sid, table, startRowIdx, startColIdx);
 });
+
 
 // 세로 나열된 다중 MSDS 붙여넣기 파서
 // 예:
@@ -944,8 +964,13 @@ if (!dedupeMap.has(dedupeKey)) {
    - 금지물질: '완전금지' (함량 무관)
    - 기타: 최대함량이 기준 이상일 때만 기준값 표시 */
 function buildKrConc(kr, cMax, maxIncluded) {
-  if (!kr || (kr.not_found && !kr['금지'])) return `<td class="cd" title="K-REACH 미등록">—</td>`;
-  if (kr.error) return `<td class="cd" title="${escAttr(kr.error)}">오류</td>`;
+  if (!kr || (kr.not_found && kr['금지'] !== 'Y')) return `<td style="text-align:center;padding:4px 6px" title="K-REACH 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
+  if (kr.error) {
+    const is429 = (kr.error || '').includes('429');
+    const label = is429 ? '일시오류' : '오류';
+    const tip   = is429 ? 'K-REACH API 호출 한도 초과 (잠시 후 재시도)' : kr.error.slice(0, 120);
+    return `<td style="text-align:center;padding:4px 6px" title="${escAttr(tip)}"><div style="font-size:11px;font-weight:700;color:var(--orange)">${label}</div></td>`;
+  }
 
   if (kr['금지'] === 'Y') {
     return `<td style="background:#1a1a2e;color:#fbbf24;font-weight:700;font-size:11px;text-align:center"
@@ -988,8 +1013,13 @@ function buildKrConc(kr, cMax, maxIncluded) {
 
 /* K-REACH 유해성여부 셀 */
 function buildKrHazard(kr) {
-  if (!kr || (kr.not_found && !kr['금지'])) return `<td class="cd">—</td>`;
-  if (kr.error) return `<td class="cd" title="${escAttr(kr.error)}">오류</td>`;
+  if (!kr || (kr.not_found && kr['금지'] !== 'Y')) return `<td style="text-align:center;padding:4px 6px" title="K-REACH 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
+  if (kr.error) {
+    const is429 = (kr.error || '').includes('429');
+    const label = is429 ? '일시오류' : '오류';
+    const tip   = is429 ? 'K-REACH API 호출 한도 초과 (잠시 후 재시도)' : kr.error.slice(0, 120);
+    return `<td style="text-align:center;padding:4px 6px" title="${escAttr(tip)}"><div style="font-size:11px;font-weight:700;color:var(--orange)">${label}</div></td>`;
+  }
 
   const lines = [];
   // 1. 일반 규제 분류 태그 (주황색: 유독, 허가, 제한, 중점)
@@ -1039,7 +1069,7 @@ function buildKrUnqNo(kr) {
 
 /* KOSHA 규제함량 셀 */
 function buildKoConc(ko) {
-  if (!ko || ko.not_found) return `<td class="cd">—</td>`;
+  if (!ko || ko.not_found) return `<td style="text-align:center;padding:4px 6px" title="KOSHA 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
   if (ko.error) return `<td class="cd" title="${escAttr(ko.error)}">미응답</td>`;
   const isReg = ko['금지'] === 'Y' || ko['특별관리'] === 'Y';
   if (!isReg) return `<td class="cd">—</td>`;
@@ -1048,7 +1078,7 @@ function buildKoConc(ko) {
 
 /* KOSHA 유해성여부 셀 */
 function buildKoHazard(ko) {
-  if (!ko || ko.not_found) return `<td class="cd">—</td>`;
+  if (!ko || ko.not_found) return `<td style="text-align:center;padding:4px 6px" title="KOSHA 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
   if (ko.error) return `<td class="cd" title="${escAttr(ko.error)}">미응답</td>`;
   const lines = [];
   if (ko['금지'] === 'Y')    lines.push(`<span class="tag-red">금지물질</span>`);
@@ -1065,6 +1095,7 @@ function buildKoHazard(ko) {
    {ok, count, results: [{filename, section2, section3}, ...]}
    ═══════════════════════════════════════════════════════════ */
 function renderAll(d) {
+  lastResultData = d;   // 텍스트 복사용 데이터 저장
   const ra          = document.getElementById('resultArea');
   const fileResults = d.results || [{ filename: d.filename || '', section2: d.section2 || {}, section3: d.section3 || [] }];
   let html = '';
@@ -1099,6 +1130,7 @@ function renderAll(d) {
       <div class="tbl-wrap"><table class="reg">
         <thead>
           <tr>
+            <th class="th-info" rowspan="2" style="width:30px;text-align:center">#</th>
             <th class="th-info" rowspan="2" style="min-width:130px">화학물질명</th>
             <th class="th-info" rowspan="2">CAS No</th>
             <th class="th-inp"  rowspan="2">최소(%)</th>
@@ -1119,7 +1151,7 @@ function renderAll(d) {
         <tbody>`;
 
     if (!s3.length) {
-      html += `<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">
+      html += `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">
         구성성분 정보가 없습니다.</td></tr>`;
     }
 
@@ -1158,6 +1190,7 @@ function renderAll(d) {
         flagTd = `<td class="cd">—</td>`;
 
       html += `<tr class="${ci > 0 ? 'row-sep' : ''}">
+        <td style="text-align:center;font-size:12px;font-weight:700;color:var(--muted)">${ci + 1}</td>
         ${nmCell}
         <td class="td-cas">${escHtml(cas)}</td>
         ${minTd}${maxTd}${flagTd}
@@ -1169,12 +1202,20 @@ function renderAll(d) {
     html += `</tbody></table></div></div></div>`;
   });
 
-  /* API 응답 원문 토글 */
+  /* 결과 복사 버튼 2종 + API 응답 원문 토글 */
   const uid = 'raw-' + Math.random().toString(36).slice(2, 6);
-  html += `<div style="text-align:right;margin-top:4px">
+  html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button id="copyResultBtn" class="copy-result-btn" onclick="copyResultsAsText(false)">
+        📋 전체 결과 복사
+      </button>
+      <button id="copyRegulatedBtn" class="copy-result-btn" style="background:linear-gradient(90deg,#b91c1c,#7f1d1d)" onclick="copyResultsAsText(true)">
+        ⚠️ 규제대상만 복사
+      </button>
+    </div>
     <button class="raw-toggle" onclick="toggleEl('${uid}')">▼ API 응답 원문 보기</button>
-    <div id="${uid}" class="raw-box">${escHtml(JSON.stringify(d, null, 2))}</div>
-  </div>`;
+  </div>
+  <div id="${uid}" class="raw-box">${escHtml(JSON.stringify(d, null, 2))}</div>`;
 
   ra.innerHTML = html;
   ra.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1184,6 +1225,177 @@ function renderAll(d) {
 /* ═══════════════════════════════════════════════════════════
    9. 유틸리티
    ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   기능1. 전체 결과 복사 / 규제대상만 복사
+   ─────────────────────────────────────────────────────────
+   copyResultsAsText(false) → 전체 결과
+   copyResultsAsText(true)  → 규제대상(함량초과·신규화학)만
+   ═══════════════════════════════════════════════════════════ */
+
+/* 규제대상 여부 판별 (수정 로직 반영) */
+function isRegulated(comp) {
+  const kr = comp.kreach || {};
+  const ko = comp.kosha  || {};
+
+  // 1. 데이터 부재/신규물질: 보수적으로 규제대상 간주
+  if (!kr || (kr.not_found && kr['금지'] !== 'Y')) return true;
+  if (!ko || ko.not_found) return true;
+
+  // 2. 무조건 규제 (Binary): 존재만으로 규제
+  // 화평법: 금지, 제한, 유해판정 / 산안법: 금지, 특별관리
+  if (kr['금지'] === 'Y' || kr['제한'] === 'Y' || kr['유해판정'] === 'Y') return true;
+  if (ko['금지'] === 'Y' || ko['특별관리'] === 'Y') return true;
+
+  // 3. 기준치 판별 (Threshold): 유독, 허가, 사고대비
+  // 해당 항목 중 하나라도 '초과'가 true인 경우에만 규제로 판별
+  if (['유독', '허가', '사고대비'].some(key => kr[key] === 'Y')) {
+    const tbl = kr['유해_기준표'] || [];
+    if (tbl.some(r => r['초과'] === true)) return true;
+  }
+
+  return false;
+}
+
+function copyResultsAsText(regulatedOnly = false) {
+  if (!lastResultData) return;
+
+  const fileResults = lastResultData.results ||
+    [{ filename: lastResultData.filename || '', section3: lastResultData.section3 || [] }];
+
+  const blocks = [];
+
+  fileResults.forEach(fd => {
+    const fname = (fd.filename || '').trim() || 'MSDS';
+    const s3    = fd.section3 || [];
+    const comps = regulatedOnly ? s3.filter(isRegulated) : s3;
+
+    const lines = [];
+    lines.push(`제품명 : ${fname}`);
+    lines.push('');
+
+    if (!comps.length) {
+      lines.push(regulatedOnly ? '\t(규제대상 물질 없음)' : '\t(구성성분 없음)');
+      blocks.push(lines.join('\n'));
+      return;
+    }
+
+    comps.forEach((comp, ci) => {
+      const cas  = comp['cas_no'] || '—';
+      const cMin = comp['함량최소'];
+      const cMax = comp['함량최대'];
+      const isLt = comp['최대포함여부'] === false || comp['미만여부'] === true;
+      const kr   = comp.kreach || {};
+      const ko   = comp.kosha  || {};
+
+      /* 물질명 처리 */
+      const nmKor = (kr['화학물질명_국문'] || '').trim().replace(/^—$/, '')
+                 || (ko['chemNameKor']      || '').trim().replace(/^—$/, '');
+      const nmEng = (kr['화학물질명_영문'] || '').trim().replace(/^—$/, '');
+      let namePart = nmKor && nmEng ? `${nmKor} (${nmEng})` : (nmKor || (nmEng ? `(${nmEng})` : cas));
+
+      /* 함량 범위 처리 */
+      let qtyPart = '함량 미상';
+      if (cMin != null && cMax != null) qtyPart = `${cMin}%~${cMax}%${isLt ? '미만' : ''}`;
+      else if (cMax != null) qtyPart = `${cMax}%${isLt ? '미만' : ''} 이하`;
+      else if (cMin != null) qtyPart = `${cMin}% 이상`;
+
+      /* 규제 결과 분석 */
+      const krParts = [];
+      const koParts = [];
+
+      // [K-REACH]
+      if (!kr || kr.not_found) {
+        krParts.push('신규화학물질');
+      } else if (!kr.error) {
+        if (kr['금지'] === 'Y') {
+          krParts.push('화평법 금지물질');
+        } else {
+          // 함량무관 규제 (제한/유해판정)
+          if (kr['제한'] === 'Y') krParts.push('유해화학물질 (제한물질)');
+          if (kr['유해판정'] === 'Y') krParts.push('유해성심사 완료물질');
+
+          // 기준치 판별 규제 (유독/허가/사고대비)
+          const tbl = kr['유해_기준표'] || [];
+          const thresholdRegs = [];
+          if (kr['유독'] === 'Y') thresholdRegs.push('유독물질');
+          if (kr['허가'] === 'Y') thresholdRegs.push('허가물질');
+          
+          if (thresholdRegs.length) {
+            const exceeded = tbl.filter(r => r['초과'] === true && ['유독', '허가'].includes(r['카테고리']));
+            if (exceeded.length) {
+              const minThr = Math.min(...exceeded.map(r => r['기준값']));
+              krParts.push(`유해화학물질 (${thresholdRegs.join(', ')}) 규제기준 ${minThr}% 이상 초과`);
+            } else {
+              const minThr = Math.min(...tbl.filter(r => ['유독', '허가'].includes(r['카테고리'])).map(r => r['기준값']));
+              krParts.push(`유해화학물질 (${thresholdRegs.join(', ')}) 규제기준 ${isNaN(minThr) ? '' : minThr + '%'} 미달`);
+            }
+          }
+
+          // 사고대비물질 별도 처리
+          if (kr['사고대비'] === 'Y') {
+            const saRow = tbl.find(r => r['카테고리'] === '사고대비');
+            if (saRow) {
+              krParts.push(`사고대비물질 규제기준 ${saRow['기준값']}% ${saRow['초과'] ? '이상 초과' : '미달'}`);
+            } else {
+              krParts.push(kr['사고대비_기준'] ? `사고대비물질 (${kr['사고대비_기준']})` : '사고대비물질');
+            }
+          }
+
+          // 아무 규제도 없는데 기존화학물질인 경우
+          if (krParts.length === 0 && kr['기존화학_ke']) {
+            krParts.push('__기존__');
+          }
+        }
+      }
+
+      // [KOSHA]
+      if (!ko || ko.not_found) {
+        if (!krParts.includes('신규화학물질')) koParts.push('신규화학물질(KOSHA)');
+      } else if (!ko.error) {
+        if (ko['금지'] === 'Y') koParts.push('산안법 금지물질');
+        if (ko['특별관리'] === 'Y') koParts.push('산안법 특별관리물질');
+      }
+
+      /* 병합 로직 */
+      const finalParts = [];
+      const koHasReg = koParts.some(p => p.startsWith('산안법'));
+
+      if (krParts.includes('화평법 금지물질') && koParts.includes('산안법 금지물질')) {
+        finalParts.push('화평법, 산안법 금지물질');
+        koParts.filter(p => p !== '산안법 금지물질').forEach(p => finalParts.push(p));
+        krParts.filter(p => p !== '화평법 금지물질').forEach(p => finalParts.push(p));
+      } else {
+        krParts.forEach(p => {
+          if (p === '__기존__') { if (!koHasReg) finalParts.push('기존화학물질'); }
+          else finalParts.push(p);
+        });
+        koParts.forEach(p => finalParts.push(p));
+      }
+
+      const bracket = finalParts.length ? ` [${finalParts.join(', ')}]` : '';
+      lines.push(`\t${ci + 1}. ${namePart} CAS NO. ${cas} 물질 ${qtyPart} 함유${bracket}`);
+    });
+
+    blocks.push(lines.join('\n'));
+  });
+
+  return blocks.join('\n\n---\n\n');
+  
+}
+
+
+function fallbackCopy(text, onDone) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  if (typeof onDone === 'function') onDone();
+}
+
+
 function showError(msg) {
   document.getElementById('resultArea').innerHTML = `
     <div class="err-box">
