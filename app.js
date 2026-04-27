@@ -20,7 +20,7 @@
    PROXY: Flask 서버 주소 (배포 시 실제 도메인으로 교체)
    sheetId, rowId: 시트·행 고유 ID 카운터
    ═══════════════════════════════════════════════════════════ */
-const SERVER = 'https://chemicalevaluation-api.onrender.com';
+const PROXY = 'https://chemicalevaluation-api.onrender.com';
 
 let sheetId = 0;   // MSDS 시트 순번
 let rowId   = 0;   // 입력 행 순번
