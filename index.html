@@ -80,31 +80,24 @@
       </div>
       
       <div class="hero-help-card">
-        <button type="button" class="hero-help-trigger">📋 MSDS 추출 방법</button>
+        <button type="button" class="hero-help-trigger"> 🔎 MSDS 추출 방법</button>
         <div class="hero-help-box white-theme">
           <strong>LLM 프롬프트</strong>
           <div class="hero-help-body">
-            <span>
+            <p>
               첨부한 MSDS PDF(또는 캡처 이미지)를 기준으로,<br>
-              각 MSDS마다 CAS NO, 최소함량, 최대함량 정보만 추출해 테이블을 생성하라.<br>
-            </span>
-            <span>
-              열 구성은 [CAS NO | 최소함량 | 최대함량]이며,<br>
-              해당 열 헤더 문구는 출력하지 말 것.<br>
-            </span>
-            <span>
-              테이블 상단에 MSDS 제목을 1회 출력 후 줄바꿈하고,<br>
-              각 성분은 한 줄씩 출력할 것.<br>
-            </span>
-            <span>
-              하나의 MSDS가 끝나면 공백 1줄을 추가할 것.<br>
-            </span>
-            <span>
-              결과 전체를 CSV 코드 형식으로 출력할 것.<br>
-            </span>
-            <span>
-              함량은 % 기호 없이 숫자만 사용 (예: 0.1~1 → 0.1,1)<br>
-            </span>
+              각 MSDS마다 <b>[CAS NO | 최소함량 | 최대함량]</b> 정보만 추출해 테이블을 생성하라.
+            </p>
+      
+            <p><b>조건:</b></p>
+            <ul>
+              <li>열 헤더([CAS NO | 최소함량 | 최대함량])는 출력하지 말 것</li>
+              <li>테이블 상단에 MSDS 제목을 1회 출력 후 줄바꿈</li>
+              <li>각 성분은 한 줄씩 출력</li>
+              <li>하나의 MSDS가 끝나면 공백 1줄 추가</li>
+              <li>결과 전체를 CSV 코드 형식으로 출력할 것</li>
+              <li>함량은 % 기호 없이 숫자만 사용 (예: 0.1~1 → 0.1,1)</li>
+            </ul>
           </div>
         </div>
       </div>
