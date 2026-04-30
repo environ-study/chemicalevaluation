@@ -84,11 +84,27 @@
         <div class="hero-help-box white-theme">
           <strong>LLM 프롬프트</strong>
           <div class="hero-help-body">
-              <span>[CAS NO | 최소함량 | 최대함량] 으로 구성된 테이블 생성. <br></span>
-              <span>"[CAS NO | 최소함량 | 최대함량] "이부분은 출력 생략 <br></span>
-              <span>한줄 생성 후 엔터, 하나의 MSDS완성 후 또 엔터. <br></span>
-              <span>테이블 상단엔 MSDS제목 1회 출력 후 엔터 <br></span>
-              <span>전체를 csv코드로 출력 <br></span>
+            <span>
+              첨부한 MSDS PDF(또는 캡처 이미지)를 기준으로,<br>
+              각 MSDS마다 CAS NO, 최소함량, 최대함량 정보만 추출해 테이블을 생성하라.<br>
+            </span>
+            <span>
+              열 구성은 [CAS NO | 최소함량 | 최대함량]이며,<br>
+              해당 열 헤더 문구는 출력하지 말 것.<br>
+            </span>
+            <span>
+              테이블 상단에 MSDS 제목을 1회 출력 후 줄바꿈하고,<br>
+              각 성분은 한 줄씩 출력할 것.<br>
+            </span>
+            <span>
+              하나의 MSDS가 끝나면 공백 1줄을 추가할 것.<br>
+            </span>
+            <span>
+              결과 전체를 CSV 코드 형식으로 출력할 것.<br>
+            </span>
+            <span>
+              함량은 % 기호 없이 숫자만 사용 (예: 0.1~1 → 0.1,1)<br>
+            </span>
           </div>
         </div>
       </div>
