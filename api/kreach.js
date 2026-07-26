@@ -9,9 +9,9 @@
    ============================================================ */
 
 const { fetchKreachRaw, applyContentJudgment } = require('./_lib/kreach-parse');
-const { getCached, setCachedSuccess } = require('./_lib/kv-cache');
+const { getCachedSuccess, setCachedSuccess } = require('./_lib/kv-cache');
 const { classifyUpstreamFailure, statusForErrorCode } = require('./_lib/http');
-const { normalizeCas } = require('../shared/normalize');
+const { normalizeCas } = require('./_lib/normalize');
 
 function firstValue(v) {
   return Array.isArray(v) ? v[0] : v;
@@ -56,10 +56,13 @@ module.exports = async function handler(req, res) {
   const contentMax = Number.isFinite(parsedContentMax) ? parsedContentMax : null;
   const isLt = isLtRaw === 'true' || isLtRaw === '1';
 
-  const cacheKey = `kreach_raw:${cas}`;
+  // v2: 상세 팝업 sources 보존 및 기존/등록대상기존 분류 수정.
+  // 이전 스키마의 성공 캐시에는 sources가 없어 비고가 빈 것으로 보이므로
+  // 키 버전을 올려 배포 직후 새 원문을 받아 자가치유한다.
+  const cacheKey = `kreach_raw:v2:${cas}`;
 
   try {
-    let raw = await getCached(cacheKey);
+    let raw = await getCachedSuccess(cacheKey);
     if (!raw) {
       raw = await fetchKreachRaw(cas, apiKey);
       await setCachedSuccess(cacheKey, raw);
@@ -68,6 +71,7 @@ module.exports = async function handler(req, res) {
     res.status(200).json(final);
   } catch (err) {
     const payload = classifyUpstreamFailure(err, err && err.upstreamRes);
+    console.error(`[api/kreach] cas=${cas} errorCode=${payload.errorCode}`);
     res.status(statusForErrorCode(payload.errorCode)).json(payload);
   }
 };

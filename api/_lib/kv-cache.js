@@ -36,4 +36,16 @@ async function deleteCached(key) {
   }
 }
 
-module.exports = { getCached, setCachedSuccess, deleteCached, DEFAULT_TTL_SECONDS };
+/**
+ * 정상적으로는 success:true만 저장되지만, 과거 버전의 캐시 오염이나
+ * 수동 조작 등으로 success:false/error가 남아있을 수 있으므로 방어적으로
+ * 확인 후 즉시 삭제하고 캐시 미스로 취급한다(스펙 4번 항목 4).
+ */
+async function getCachedSuccess(key) {
+  const cached = await getCached(key);
+  if (cached && cached.success === true) return cached;
+  if (cached) await deleteCached(key);
+  return null;
+}
+
+module.exports = { getCached, getCachedSuccess, setCachedSuccess, deleteCached, DEFAULT_TTL_SECONDS };

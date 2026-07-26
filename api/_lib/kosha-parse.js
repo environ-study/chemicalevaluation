@@ -50,9 +50,9 @@ function parseResponseItems(text, contentType) {
   });
 }
 
-async function getItems(endpoint, params, apiKey) {
+async function getItems(endpoint, params, apiKey, cas) {
   const qs = new URLSearchParams({ serviceKey: apiKey, ...params });
-  const res = await fetchWithRetry(`${KOSHA_URL}${endpoint}?${qs.toString()}`);
+  const res = await fetchWithRetry(`${KOSHA_URL}${endpoint}?${qs.toString()}`, {}, { api: 'kosha', cas });
   if (!res.ok) {
     const err = new Error(`KOSHA upstream HTTP ${res.status}`);
     err.upstreamRes = res;
@@ -99,7 +99,8 @@ async function fetchKoshaResult(casNo, apiKey) {
   const listItems = await getItems(
     '/getChemList',
     { searchWrd: cas, searchCnd: '1', numOfRows: '10', pageNo: '1' },
-    apiKey
+    apiKey,
+    cas
   );
 
   if (!listItems.length) return emptyResult(cas);
@@ -126,7 +127,7 @@ async function fetchKoshaResult(casNo, apiKey) {
 
   // 15절(법적 규제현황) 조회 실패는 "규제없음"이 아니라 실제 오류로 취급해
   // 잘못된 비규제 판정이 캐시/노출되지 않도록 한다 — 호출부에서 재시도 유도.
-  const detailItems = await getItems('/getChemDetail15', { chemId: chemIdPadded }, apiKey);
+  const detailItems = await getItems('/getChemDetail15', { chemId: chemIdPadded }, apiKey, cas);
 
   const fullText = detailItems.map((it) => it.itemDetail || '').join(' | ');
 

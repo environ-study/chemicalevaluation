@@ -8,9 +8,9 @@
    ============================================================ */
 
 const { fetchKoshaResult } = require('./_lib/kosha-parse');
-const { getCached, setCachedSuccess } = require('./_lib/kv-cache');
+const { getCachedSuccess, setCachedSuccess } = require('./_lib/kv-cache');
 const { classifyUpstreamFailure, statusForErrorCode } = require('./_lib/http');
-const { normalizeCas } = require('../shared/normalize');
+const { normalizeCas } = require('./_lib/normalize');
 
 function firstValue(v) {
   return Array.isArray(v) ? v[0] : v;
@@ -52,7 +52,7 @@ module.exports = async function handler(req, res) {
   const cacheKey = `kosha:${cas}`;
 
   try {
-    let result = await getCached(cacheKey);
+    let result = await getCachedSuccess(cacheKey);
     if (!result) {
       result = await fetchKoshaResult(cas, apiKey);
       await setCachedSuccess(cacheKey, result);
@@ -60,6 +60,7 @@ module.exports = async function handler(req, res) {
     res.status(200).json(result);
   } catch (err) {
     const payload = classifyUpstreamFailure(err, err && err.upstreamRes);
+    console.error(`[api/kosha] cas=${cas} errorCode=${payload.errorCode}`);
     res.status(statusForErrorCode(payload.errorCode)).json(payload);
   }
 };

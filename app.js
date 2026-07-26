@@ -17,8 +17,27 @@
    13. 에러 표시 / 유틸
    ============================================================ */
 
-/* shared/normalize.js(UMD)가 app.js보다 먼저 로드되어 있어야 한다 */
-const { normalizeCas, isValidCasFormat, normalizeUniqueNo, isKeNumber, compositeKey } = window.ChemNormalize;
+/* CAS / 유해화학물질 고유번호 정규화
+   ─────────────────────────────────────────────────────────
+   api/_lib/normalize.js와 로직이 동일하다(별도 정적 파일로 분리했다가
+   배포 환경에서 루트 밖 static 서빙이 누락되어 앱 전체가 깨진 적이
+   있어, 브라우저 쪽은 별도 <script> 의존 없이 이렇게 인라인한다.
+   둘 중 하나를 고치면 반드시 다른 쪽도 함께 수정할 것). */
+function normalizeCas(raw) {
+  return String(raw == null ? '' : raw).trim().replace(/\s+/g, '');
+}
+function isValidCasFormat(cas) {
+  return /^\d{2,7}-\d{2}-\d$/.test(normalizeCas(cas));
+}
+function normalizeUniqueNo(raw) {
+  return String(raw == null ? '' : raw).trim().replace(/\s+/g, '').toUpperCase();
+}
+function isKeNumber(str) {
+  return /^KE-/i.test(String(str == null ? '' : str).trim());
+}
+function compositeKey(cas, uniqueNo) {
+  return normalizeCas(cas) + '|' + normalizeUniqueNo(uniqueNo);
+}
 
 /* ═══════════════════════════════════════════════════════════
    1. 상수 / 전역 상태
@@ -28,34 +47,25 @@ let rowId   = 0;   // 입력 행 순번
 let lastResultData = null;  // 마지막 분석 결과(시트 배열) — 복사/LOC 생성용
 
 // 사내 허가 화학물질 목록 전역 상태
-let permittedItems = [];          // [{casNo, uniqueNo}, ...]
-let permittedSet = new Set();     // "cas|uniqueNo" 복합키 Set
-let permittedUnavailable = false; // 목록 로드 실패 여부(분석은 계속 가능)
+let permittedItems = [];              // [{casNo, uniqueNo}, ...]
+let permittedCasSet = new Set();      // CAS 번호 단독 비교용
+let permittedUniqueNoSet = new Set(); // 유해화학물질 고유번호 단독 비교용
+let permittedCompositeSet = new Set(); // "cas|uniqueNo" — 중복 등록·삭제 식별용(구매판정에는 미사용)
+let permittedUnavailable = false;     // 목록 로드 실패 여부(분석은 계속 가능)
 
-// CAS 검색 히스토리 (localStorage 기반)
-const CAS_HISTORY_KEY = 'cas_history';
+/** permittedItems로부터 세 인덱스를 다시 만든다(로드/등록/삭제 후 항상 호출) */
+function rebuildPermittedIndexes() {
+  permittedCasSet = new Set();
+  permittedUniqueNoSet = new Set();
+  permittedCompositeSet = new Set();
 
-function getCasHistory() {
-  try { return JSON.parse(localStorage.getItem(CAS_HISTORY_KEY) || '{}'); }
-  catch { return {}; }
-}
-
-function recordCas(cas) {
-  if (!cas || cas.length < 5) return;
-  const h = getCasHistory();
-  if (!h[cas]) h[cas] = { count: 0, lastUsed: 0 };
-  h[cas].count += 1;
-  h[cas].lastUsed = Date.now();
-  localStorage.setItem(CAS_HISTORY_KEY, JSON.stringify(h));
-}
-
-function getFrequentCas(minCount = 4) {
-  const h = getCasHistory();
-  return Object.entries(h)
-    .filter(([, data]) => data.count >= minCount)
-    .sort((a, b) => b[1].lastUsed - a[1].lastUsed)
-    .slice(0, 5)
-    .map(([cas]) => [cas, h[cas].count]);
+  permittedItems.forEach((item) => {
+    const cas = normalizeCas(item.casNo);
+    const uniqueNo = normalizeUniqueNo(item.uniqueNo);
+    if (cas) permittedCasSet.add(cas);
+    if (uniqueNo) permittedUniqueNoSet.add(uniqueNo);
+    if (cas && uniqueNo) permittedCompositeSet.add(compositeKey(cas, uniqueNo));
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -77,7 +87,7 @@ async function loadPermittedListAndStatus() {
     if (!d.success) throw new Error(d.message || '허가목록 조회 실패');
 
     permittedItems = d.items || [];
-    permittedSet = new Set(permittedItems.map((it) => compositeKey(it.casNo, it.uniqueNo)));
+    rebuildPermittedIndexes();
     permittedUnavailable = false;
 
     if (txt) txt.textContent = `✅ 서버 정상 — 사내 허가목록 ${permittedItems.length}건 로드됨`;
@@ -85,7 +95,7 @@ async function loadPermittedListAndStatus() {
   } catch (e) {
     permittedUnavailable = true;
     permittedItems = [];
-    permittedSet = new Set();
+    rebuildPermittedIndexes();
     if (txt) txt.textContent = '⚠️ 사내 허가목록을 불러오지 못했습니다 (분석은 계속 가능 / 허가 여부는 검토필요로 표시)';
     if (bar) bar.style.color = 'var(--orange)';
   }
@@ -117,7 +127,6 @@ function addMsdsSheet(name) {
   body.className = 'msds-sheet-body';
   body.id = 'sheet-body-' + sid;
   body.innerHTML = `
-    <div class="cas-history-bar" id="cas-hist-${sid}"></div>
     <div class="manual-header">
       <span>#</span>
       <span>CAS번호</span>
@@ -133,7 +142,6 @@ function addMsdsSheet(name) {
   sheet.appendChild(head);
   sheet.appendChild(body);
   container.appendChild(sheet);
-  renderCasHistoryBar(sid);
   addManualRow(sid, '', null, null, false);
 }
 
@@ -315,27 +323,6 @@ document.addEventListener('keydown', function (e) {
     }
   }
 });
-
-function renderCasHistoryBar(sid) {
-  const bar = document.getElementById('cas-hist-' + sid);
-  if (!bar) return;
-  const freq = getFrequentCas(3);
-  if (!freq.length) { bar.style.display = 'none'; return; }
-  bar.style.display = 'flex';
-  bar.innerHTML = '<span class="cas-hist-label">자주 쓴 CAS</span>' +
-    freq.map(([c, cnt]) =>
-      `<button class="cas-hist-btn" onclick="addManualRow(${sid},'${c}',null,null,false);renderCasHistoryBar(${sid})" title="${cnt}회 검색">
-        ${c}
-      </button>`
-    ).join('');
-}
-
-function refreshAllHistoryBars() {
-  document.querySelectorAll('[id^="cas-hist-"]').forEach(el => {
-    const sid = el.id.replace('cas-hist-', '');
-    renderCasHistoryBar(parseInt(sid));
-  });
-}
 
 document.addEventListener('keydown', function(e) {
   if (e.key !== '+') return;
@@ -731,7 +718,6 @@ async function doManual() {
       const minV   = minRaw !== '' ? parseFloat(minRaw) : null;
       const maxV   = maxRaw !== '' ? parseFloat(maxRaw) : null;
       const isLt   = document.getElementById('lt-' + id)?.checked || false;
-      recordCas(cas);
 
       const dedupeKey = [filename, cas, minV ?? '', maxV ?? '', isLt ? 'lt' : 'incl'].join('|');
       if (dedupeMap.has(dedupeKey)) continue;
@@ -800,58 +786,98 @@ async function doManual() {
 
   payload.forEach((sheet) => {
     sheet.comps.forEach((comp) => {
-      comp.verdict = decidePurchase(comp, permittedSet, permittedUnavailable);
+      comp.verdict = decidePurchase(comp, permittedCasSet, permittedUniqueNoSet, permittedUnavailable);
     });
   });
 
   lastResultData = payload;
   renderAll(payload);
-  refreshAllHistoryBars();
   document.getElementById('runBtnM').disabled = false;
+}
+
+/**
+ * 실패한 CAS 번호 하나만 다시 조회한다(전체 재분석 없이).
+ * K-REACH/KOSHA 셀의 "🔄 재분석" 버튼에서 호출된다.
+ */
+async function retryComp(sheetIdx, compIdx, type) {
+  const sheet = lastResultData && lastResultData[sheetIdx];
+  const comp = sheet && sheet.comps && sheet.comps[compIdx];
+  if (!comp) return;
+
+  try {
+    if (type === 'kr') {
+      comp.kr = await fetchKreach(comp.cas, comp.max, comp.isLt);
+    } else {
+      comp.ko = await fetchKosha(comp.cas);
+    }
+  } catch (e) {
+    const errObj = {
+      success: false,
+      retryable: true,
+      errorCode: 'CLIENT_FETCH_FAILED',
+      message: e && e.message ? e.message : '조회 중 오류가 발생했습니다.',
+    };
+    if (type === 'kr') comp.kr = errObj; else comp.ko = errObj;
+  }
+
+  comp.verdict = decidePurchase(comp, permittedCasSet, permittedUniqueNoSet, permittedUnavailable);
+  renderAll(lastResultData);
 }
 
 
 /* ═══════════════════════════════════════════════════════════
    9. 4단계 구매 판정
    ─────────────────────────────────────────────────────────
-   우선순위: 구매불가 > 검토 필요 > 구매가능(사내허가) > 구매가능
+   판정 순서:
+     1. 금지(K-REACH 금지물질 또는 KOSHA 제조 등의 금지물질) → 구매불가
+        (조회에 성공한 쪽에서 금지가 확인되면, 다른 쪽 API가 실패했어도 우선 적용)
+     2. K-REACH·KOSHA 중 하나라도 조회 자체가 실패 → 검토 필요
+     3. KOSHA 특별관리물질 → 검토 필요(관리대상·허가대상 유해물질은 판정에 미반영)
+     4. K-REACH 규제대상이고 CAS 또는 적용 고유번호 중 하나라도 사내 허가목록과
+        일치 → 구매가능(사내 허가물질) — 완전일치가 아니라 CAS OR 고유번호 매칭
+     5. K-REACH 규제대상이지만 CAS·고유번호 모두 불일치 → 검토 필요
+     6. 규제 비해당 → 구매가능
    verdict: 'BLOCK' | 'REVIEW' | 'PERMITTED' | 'OK'
    ═══════════════════════════════════════════════════════════ */
-function decidePurchase(comp, permSet, permUnavailable) {
+function decidePurchase(comp, permCasSet, permUniqueNoSet, permUnavailable) {
   const kr = comp.kr;
   const ko = comp.ko;
+  const krOk = !!kr && kr.success === true;
+  const koOk = !!ko && ko.success === true;
 
-  // 조회 자체가 실패한 경우 — 판정 불가
-  if (!kr || kr.success !== true || !ko || ko.success !== true) {
-    return { verdict: 'REVIEW', reason: '규제 조회 실패 — 재분석이 필요합니다.', appliedUniqueNos: [] };
-  }
-
-  // 1. 금지 — 사내 허가목록보다 절대 우선
-  if (kr.prohibited || ko.prohibited) {
+  // 1. 금지 — 사내 허가목록보다 절대 우선. 확인된 쪽만으로 판단(다른 쪽 실패와 무관)
+  const krProhibited = krOk && kr.prohibited;
+  const koProhibited = koOk && ko.prohibited;
+  if (krProhibited || koProhibited) {
     const reasons = [];
-    if (kr.prohibited) reasons.push('K-REACH 금지물질');
-    if (ko.prohibited) reasons.push('KOSHA 제조 등의 금지물질');
+    if (krProhibited) reasons.push('K-REACH 금지물질');
+    if (koProhibited) reasons.push('KOSHA 제조 등의 금지물질');
     return { verdict: 'BLOCK', reason: reasons.join(' / '), appliedUniqueNos: [] };
   }
 
-  const krMatched = (kr.regulations || []).filter((r) => r.matchedByContent);
-  const koMatched = ko.regulations || []; // KOSHA는 매칭된 항목만 담겨 있음
-
-  // 2. 규제 비해당(기존화학물질 KE번호만 있는 경우 포함 — regulations에 안 들어감)
-  if (!krMatched.length && !koMatched.length) {
-    return { verdict: 'OK', reason: '', appliedUniqueNos: [] };
+  // 2. 조회 자체가 실패한 경우 — 판정 불가
+  if (!krOk || !koOk) {
+    return { verdict: 'REVIEW', reason: '규제 조회 실패 — 재분석이 필요합니다.', appliedUniqueNos: [] };
   }
 
-  // KOSHA 규제는 사내 허가목록(CAS+K-REACH 고유번호 기준)으로 해소할 수 없음
-  if (koMatched.length) {
+  // 3. KOSHA 특별관리물질 — 사내 허가목록(화관법 기준)으로 해소할 수 없음
+  const koSpecial = (ko.regulations || []).some((r) => r.type === '특별관리물질');
+  if (koSpecial) {
     return {
       verdict: 'REVIEW',
-      reason: 'KOSHA 규제대상(사내 허가목록으로 해소 불가) — ' + koMatched.map((r) => r.type).join(', '),
+      reason: 'KOSHA 특별관리물질(사내 허가목록으로 해소 불가)',
       appliedUniqueNos: [],
     };
   }
 
-  // 3. K-REACH 규제대상 → 적용 고유번호(중복 제거) 추출
+  const krMatched = (kr.regulations || []).filter((r) => r.matchedByContent);
+
+  // 6. 규제 비해당(기존화학물질 KE번호만 있는 경우, 관리대상 유해물질만 있는 경우 포함)
+  if (!krMatched.length) {
+    return { verdict: 'OK', reason: '', appliedUniqueNos: [] };
+  }
+
+  // 4/5. K-REACH 규제대상 → CAS 또는 적용 고유번호 중 하나라도 일치하면 허가
   const uniqueNos = Array.from(new Set(krMatched.map((r) => r.uniqueNo).filter(Boolean)));
 
   if (permUnavailable) {
@@ -862,24 +888,17 @@ function decidePurchase(comp, permSet, permUnavailable) {
     };
   }
 
-  if (!uniqueNos.length) {
-    return {
-      verdict: 'REVIEW',
-      reason: '유해화학물질 고유번호를 확인하지 못했습니다.',
-      appliedUniqueNos: uniqueNos,
-    };
-  }
-
   const cas = normalizeCas(comp.cas);
-  const allMatched = uniqueNos.every((unq) => permSet.has(compositeKey(cas, unq)));
+  const casMatched = permCasSet.has(cas);
+  const uniqueNoMatched = uniqueNos.some((unq) => permUniqueNoSet.has(normalizeUniqueNo(unq)));
 
-  if (allMatched) {
+  if (casMatched || uniqueNoMatched) {
     return { verdict: 'PERMITTED', reason: '사내 허가된 유해화학물질', appliedUniqueNos: uniqueNos };
   }
 
   return {
     verdict: 'REVIEW',
-    reason: '사내 허가목록과 일부 또는 전부 불일치',
+    reason: '사내 허가목록과 불일치',
     appliedUniqueNos: uniqueNos,
   };
 }
@@ -892,54 +911,218 @@ function verdictMeta(verdict) {
   switch (verdict) {
     case 'BLOCK':     return { icon: '⛔', label: '구매불가', cls: 'verdict-block' };
     case 'REVIEW':    return { icon: '⚠',  label: '검토 필요', cls: 'verdict-review' };
-    case 'PERMITTED': return { icon: '✅', label: '구매가능', sub: '사내 허가된 유해화학물질', cls: 'verdict-permitted' };
+    case 'PERMITTED': return { icon: '✅', label: '구매가능', sub: '사내 허가물질', cls: 'verdict-permitted' };
     default:          return { icon: '✅', label: '구매가능', cls: 'verdict-ok' };
   }
 }
 
+/* 판정 셀은 배지만 간단히 표시 — 상세 사유는 title 툴팁으로만 제공(본문에 긴 문장 금지) */
 function buildVerdictCell(v) {
   const meta = verdictMeta(v.verdict);
-  const subText = meta.sub || (v.verdict !== 'OK' ? v.reason : '');
-  const sub = subText ? `<div class="verdict-sub">${escHtml(subText)}</div>` : '';
-  return `<td class="td-verdict"><span class="verdict-badge ${meta.cls}">${meta.icon} ${meta.label}</span>${sub}</td>`;
+  const sub = meta.sub ? `<div class="verdict-sub">${escHtml(meta.sub)}</div>` : '';
+  const titleAttr = v.reason ? ` title="${escAttr(v.reason)}"` : '';
+  return `<td class="td-verdict"${titleAttr}><span class="verdict-badge ${meta.cls}">${meta.icon} ${meta.label}</span>${sub}</td>`;
 }
 
-function buildKrCell(kr) {
-  if (!kr || kr.success !== true) {
-    const msg = (kr && kr.message) || '조회 실패';
-    return `<td class="td-law" title="${escAttr(msg)}"><span class="tag-org">조회 실패</span><div class="law-note">재분석이 필요합니다</div></td>`;
-  }
+/* 조회 실패 셀 공통 — 재조회 버튼으로 해당 성분만 다시 조회할 수 있게 한다 */
+function retryBtn(sheetIdx, compIdx, type) {
+  return `<button class="retry-btn" onclick="retryComp(${sheetIdx},${compIdx},'${type}')" title="다시 조회">🔄 재분석</button>`;
+}
 
-  const lines = [];
-  if (kr.notFound) lines.push(`<span class="tag-new">신규(K-REACH 미등록)</span>`);
+function failedCell(sheetIdx, compIdx, type) {
+  return `<td class="td-law"><span class="tag-org">조회 오류</span><div class="law-note">재분석 필요</div>${retryBtn(sheetIdx, compIdx, type)}</td>`;
+}
+
+// 규제유형별 스티커 색상 (기존=회색, 제한·유독물질=주황, 허가물질=보라,
+// 인체등유해성물질=노랑, 사고대비물질=청록, 금지물질=빨강)
+function krTagClass(type) {
+  switch (type) {
+    case '제한물질':
+    case '유독물질':      return 'tag-org';
+    case '허가물질':      return 'tag-purple';
+    case '인체등유해성물질': return 'tag-yel';
+    case '사고대비물질':    return 'tag-cyan';
+    case '금지물질':       return 'tag-red';
+    default:              return 'tag-gray';
+  }
+}
+
+/** 스티커에는 고유번호를 표시하지 않고 규제유형과 기준값만 표시한다. */
+function regSticker(r) {
+  return [r.type, r.criterion].filter(Boolean).join(' · ');
+}
+
+/** 해당되는 급성/만성/생태를 하나의 인체등유해성 스티커로 통합한다. */
+function combinedHazardSticker(hazardEntries) {
+  const order = ['급성', '만성', '생태'];
+  const categories = new Set(hazardEntries.map(({ r }) => r.hazardCategory).filter(Boolean));
+  const categoryText = order.filter((cat) => categories.has(cat)).join(',');
+  const thresholds = hazardEntries
+    .map(({ r }) => r)
+    .filter((r) => Number.isFinite(r.thresholdValue));
+  const minimum = thresholds.length
+    ? thresholds.reduce((best, r) => r.thresholdValue < best.thresholdValue ? r : best)
+    : null;
+  const criterion = minimum && minimum.criterion ? `(${minimum.criterion})` : '';
+  return `인체등유해성${categoryText ? `·${categoryText}` : ''}${criterion}`;
+}
+
+function hasDetailContent(sources) {
+  return Array.isArray(sources) && sources.some((s) => s.contInfo || s.excpInfo || s.ancmntInfo);
+}
+
+/** 클릭 시 상세정보 팝업(openKrDetailPopup)을 여는 규제 스티커 버튼 */
+function krTagButton(sheetIdx, compIdx, kind, key, text, cls, sources) {
+  const infoMark = hasDetailContent(sources) ? ' ⓘ' : '';
+  let keyArg;
+  if (key == null) keyArg = 'null';
+  else if (typeof key === 'number') keyArg = String(key);
+  else keyArg = `'${String(key).replace(/'/g, "\\'")}'`;
+  return `<button type="button" class="kreach-tag ${cls}" onclick="openKrDetailPopup(${sheetIdx},${compIdx},'${kind}',${keyArg})">${escHtml(text)}${infoMark}</button>`;
+}
+
+function buildKrCell(kr, sheetIdx, compIdx) {
+  if (!kr || kr.success !== true) return failedCell(sheetIdx, compIdx, 'kr');
+
+  const tags = [];
+
+  // 모든 규제유형을 각각 하나의 완결된 스티커로 표시 — 스티커 밖에 중복 문구를 두지 않는다.
   if (kr.prohibited) {
-    lines.push(`<div class="law-prohib">⛔ 금지물질${kr.prohibitedReason ? ' — ' + escHtml(kr.prohibitedReason) : ''}</div>`);
+    tags.push(krTagButton(sheetIdx, compIdx, 'prohibited', null, '금지물질', krTagClass('금지물질'), kr.prohibitedSources));
   }
-  (kr.regulations || []).filter((r) => r.matchedByContent).forEach((r) => {
-    const parts = [r.type];
-    if (r.hazardCategory) parts.push(r.hazardCategory);
-    if (r.criterion) parts.push(r.criterion);
-    let line = parts.join(' ');
-    if (r.uniqueNo) line += ` (${r.uniqueNo})`;
-    lines.push(`<div class="law-line">${escHtml(line)}</div>`);
-  });
-  if (kr.existingChemical && kr.existingChemical.matched) {
-    lines.push(`<span class="tag-gray">기존화학물질 (${escHtml(kr.existingChemical.keNo)})</span>`);
-  }
-  (kr.infoTags || []).forEach((t) => lines.push(`<span class="tag-gray">${escHtml(t.type)}</span>`));
 
-  if (!lines.length) return `<td class="td-law">규제기준 비해당</td>`;
-  return `<td class="td-law">${lines.join('')}</td>`;
+  if (kr.notFound) tags.push(`<span class="kreach-tag tag-new">신규(K-REACH 미등록)</span>`);
+
+  const matched = (kr.regulations || [])
+    .map((r, idx) => ({ r, idx }))
+    .filter(({ r }) => r.matchedByContent);
+
+  const hazardEntries = matched.filter(({ r }) => r.type === '인체등유해성물질');
+  const otherEntries = matched.filter(({ r }) => r.type !== '인체등유해성물질');
+
+  if (hazardEntries.length) {
+    const sources = hazardEntries.reduce((acc, { r }) => acc.concat(r.sources || []), []);
+    tags.push(krTagButton(
+      sheetIdx,
+      compIdx,
+      'hazardCombined',
+      null,
+      combinedHazardSticker(hazardEntries),
+      krTagClass('인체등유해성물질'),
+      sources,
+    ));
+  }
+
+  otherEntries.forEach(({ r, idx }) => {
+    tags.push(krTagButton(sheetIdx, compIdx, 'reg', idx, regSticker(r), krTagClass(r.type), r.sources));
+  });
+
+  if (kr.existingChemical && kr.existingChemical.matched) {
+    tags.push(krTagButton(sheetIdx, compIdx, 'existing', null, '기존', 'tag-gray', kr.existingChemical.sources));
+  }
+
+  (kr.infoTags || []).forEach((t, idx) => {
+    tags.push(krTagButton(sheetIdx, compIdx, 'infoTag', idx, t.type, 'tag-gray', t.sources));
+  });
+
+  if (!tags.length) return `<td class="td-law">규제기준 비해당</td>`;
+  return `<td class="td-law">${tags.join('')}</td>`;
 }
 
-function buildKoCell(ko) {
-  if (!ko || ko.success !== true) {
-    const msg = (ko && ko.message) || '조회 실패';
-    return `<td class="td-law" title="${escAttr(msg)}"><span class="tag-org">조회 실패</span><div class="law-note">재분석이 필요합니다</div></td>`;
+/* ── K-REACH 상세정보 팝업 ─────────────────────────────────
+   contInfo/excpInfo/ancmntInfo에 포함된 <br> 태그만 실제 줄바꿈으로
+   바꾼다. 먼저 escHtml로 전체를 이스케이프한 뒤 우리가 만든 <br>만
+   다시 넣으므로, 원본에 다른 태그가 섞여 있어도 그대로 텍스트로 남는다
+   (innerHTML로 원본 HTML을 그대로 삽입하지 않음 — XSS 방지). */
+function normalizeBrText(raw) {
+  return String(raw || '').replace(/<br\s*\/?>/gi, '\n');
+}
+function escMultiline(raw) {
+  return escHtml(normalizeBrText(raw)).replace(/\n/g, '<br>');
+}
+
+function openKrDetailPopup(sheetIdx, compIdx, kind, key) {
+  const sheet = lastResultData && lastResultData[sheetIdx];
+  const comp = sheet && sheet.comps && sheet.comps[compIdx];
+  const kr = comp && comp.kr;
+  if (!kr) return;
+
+  let title = '';
+  let sources = [];
+
+  if (kind === 'reg') {
+    const r = (kr.regulations || [])[key];
+    if (!r) return;
+    title = regSticker(r);
+    sources = r.sources || [];
+  } else if (kind === 'hazardCombined') {
+    const entries = (kr.regulations || [])
+      .map((r, idx) => ({ r, idx }))
+      .filter(({ r }) => r.type === '인체등유해성물질' && r.matchedByContent);
+    title = combinedHazardSticker(entries);
+    sources = entries.reduce((acc, { r }) => acc.concat(r.sources || []), []);
+  } else if (kind === 'existing') {
+    title = '기존';
+    sources = (kr.existingChemical && kr.existingChemical.sources) || [];
+  } else if (kind === 'prohibited') {
+    title = '금지물질';
+    sources = kr.prohibitedSources || [];
+  } else if (kind === 'infoTag') {
+    const t = (kr.infoTags || [])[key];
+    if (!t) return;
+    title = t.type;
+    sources = t.sources || [];
+  } else {
+    return;
   }
+
+  renderKrDetailModal(comp, kr, title, sources);
+}
+
+function renderKrDetailModal(comp, kr, title, sources) {
+  const modal = document.getElementById('krDetailModal');
+  const body = document.getElementById('krDetailBody');
+  const titleEl = document.getElementById('krDetailTitle');
+  if (!modal || !body) return;
+
+  if (titleEl) titleEl.textContent = title;
+
+  const meta = `
+    <div class="kr-detail-meta">
+      <div><b>화학물질명</b> ${escHtml(kr.chemicalName || comp.cas)}</div>
+      <div><b>CAS 번호</b> ${escHtml(comp.cas)}</div>
+      <div><b>규제유형</b> ${escHtml(title)}</div>
+    </div>`;
+
+  const blocks = sources.length
+    ? sources.map((s) => `
+      <div class="kr-detail-block">
+        <div class="kr-detail-subtype">${escHtml(s.subType || title)}</div>
+        ${s.itemName ? `<div class="kr-detail-row"><b>item 구분</b> ${escHtml(s.itemName)}</div>` : ''}
+        ${s.uniqueNo ? `<div class="kr-detail-row"><b>고유번호</b> ${escHtml(s.uniqueNo)}</div>` : ''}
+        <div class="kr-detail-row"><b>함량기준(contInfo)</b><div class="kr-detail-text">${s.contInfo ? escMultiline(s.contInfo) : '—'}</div></div>
+        <div class="kr-detail-row"><b>예외·부칙(excpInfo)</b><div class="kr-detail-text">${s.excpInfo ? escMultiline(s.excpInfo) : '—'}</div></div>
+        ${s.ancmntYmd ? `<div class="kr-detail-row"><b>고시일자</b> ${escHtml(s.ancmntYmd)}</div>` : ''}
+        ${s.ancmntInfo ? `<div class="kr-detail-row"><b>고시정보</b><div class="kr-detail-text">${escMultiline(s.ancmntInfo)}</div></div>` : ''}
+      </div>`).join('')
+    : `<div class="kr-detail-block"><div class="kr-detail-text">원본 상세정보가 없습니다.</div></div>`;
+
+  body.innerHTML = meta + blocks;
+  modal.style.display = 'flex';
+}
+
+function closeKrDetailModal() {
+  const modal = document.getElementById('krDetailModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function buildKoCell(ko, sheetIdx, compIdx) {
+  if (!ko || ko.success !== true) return failedCell(sheetIdx, compIdx, 'ko');
 
   const lines = [];
   if (ko.notFound) lines.push(`<span class="tag-new">신규(KOSHA 미등록)</span>`);
+  // 확인된 산안법 유해성·규제 구분은 최종 판정에 쓰이지 않는 것(관리대상 유해물질 등)까지
+  // 전부 표시한다. 하나라도 있으면 "규제기준 비해당" 문구는 함께 표시하지 않는다.
   (ko.regulations || []).forEach((r) => {
     const isProhibit = r.type === '제조 등의 금지물질';
     lines.push(`<div class="${isProhibit ? 'law-prohib' : 'law-line'}">${isProhibit ? '⛔ ' : ''}${escHtml(r.type)}</div>`);
@@ -967,51 +1150,48 @@ function renderAll(payload) {
     else if (counts.PERMITTED) overall = 'PERMITTED';
 
     const overallMeta = verdictMeta(overall);
-    let bannerTitle;
-    let bannerDetail;
-    if (overall === 'BLOCK') {
-      bannerTitle = '제품 구매불가';
-      bannerDetail = `금지물질 성분 ${counts.BLOCK}종 포함`;
-    } else if (overall === 'REVIEW') {
-      bannerTitle = '제품 구매 전 검토 필요';
-      bannerDetail = `전체 ${comps.length}종 / 사내 허가물질 ${counts.PERMITTED}종 / 검토필요 ${counts.REVIEW}종`;
-    } else if (overall === 'PERMITTED') {
-      bannerTitle = '제품 구매가능';
-      bannerDetail = `사내 허가된 유해화학물질 ${counts.PERMITTED}종 포함`;
-    } else {
-      bannerTitle = '제품 구매가능';
-      bannerDetail = `전체 ${comps.length}개 성분 중 규제 검토 대상 없음`;
-    }
+    // 상단 요약은 한 줄로만 간단히 표시 — 성분별 근거는 각 행의 판정 배지 title에서 확인
+    const bannerTitle = overall === 'BLOCK' ? '제품 구매불가'
+      : overall === 'REVIEW' ? '제품 구매 전 검토 필요'
+      : '제품 구매가능';
+    const bannerDetail = `전체 ${comps.length}종 / 사내 허가물질 ${counts.PERMITTED}종 / 검토필요 ${counts.REVIEW}종 / 구매불가 ${counts.BLOCK}종`;
 
     html += `<div class="card" style="margin-bottom:${fi < payload.length - 1 ? '6px' : '14px'}">
       <div class="card-head">📦 구성성분 + 규제정보 — ${escHtml(fname)}
         <span class="sec-badge b-gray" style="margin-left:auto">${comps.length}종</span>
       </div>
-      <div class="summary-banner ${overallMeta.cls}">
+      <div class="summary-banner ${overallMeta.cls}" title="${escAttr(bannerDetail)}">
         <span class="summary-icon">${overallMeta.icon}</span>
         <div class="summary-text">
           <div class="summary-title">${escHtml(bannerTitle)}</div>
-          <div class="summary-detail">${escHtml(bannerDetail)}</div>
         </div>
-        <button class="loc-btn" id="locBtn-${fi}" onclick="generateLoc(${fi})">📄 LOC 확인서(Word) 다운로드</button>
+        <div class="loc-btn-group">
+          <button class="loc-btn" id="locEnvBtn-${fi}" onclick="generateEnvLoc(${fi})">📄 환경 LOC 다운로드</button>
+          <button class="loc-btn loc-btn-health" id="locHealthBtn-${fi}" onclick="generateHealthLoc(${fi})">📄 보건 LOC 다운로드</button>
+        </div>
       </div>
       <div class="card-body" style="padding-top:8px">
       <div class="tbl-wrap"><table class="reg">
+        <colgroup>
+          <col style="width:3%">
+          <col style="width:23%">
+          <col style="width:10%">
+          <col style="width:6%">
+          <col style="width:6%">
+          <col style="width:10%">
+          <col style="width:29%">
+          <col style="width:13%">
+        </colgroup>
         <thead>
           <tr>
-            <th class="th-info" rowspan="2" style="width:30px;text-align:center">#</th>
-            <th class="th-info" rowspan="2" style="min-width:130px">화학물질명</th>
-            <th class="th-info" rowspan="2">CAS No</th>
-            <th class="th-inp" colspan="2">성분함량</th>
-            <th class="th-info" rowspan="2">판정</th>
-            <th class="th-kr">화평법 (K-REACH)</th>
-            <th class="th-ko">산안법 (KOSHA)</th>
-          </tr>
-          <tr>
+            <th class="th-info">#</th>
+            <th class="th-info">화학물질명</th>
+            <th class="th-info">CAS No</th>
             <th class="th-inp">최소(%)</th>
             <th class="th-inp">최대(%)</th>
-            <th class="th-kr">유해성·규제정보</th>
-            <th class="th-ko">유해성·규제정보</th>
+            <th class="th-info" style="text-align:center">판정</th>
+            <th class="th-kr">화학물질 등록 및 평가에 관한 법률 규제정보</th>
+            <th class="th-ko">산업안전보건법에 따른 규제정보</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1049,8 +1229,8 @@ function renderAll(payload) {
         <td class="td-cas">${escHtml(comp.cas)}</td>
         ${minTd}${maxTd}
         ${buildVerdictCell(comp.verdict)}
-        ${buildKrCell(comp.kr)}
-        ${buildKoCell(comp.ko)}
+        ${buildKrCell(comp.kr, fi, ci)}
+        ${buildKoCell(comp.ko, fi, ci)}
       </tr>`;
     });
 
@@ -1120,7 +1300,8 @@ function copyResultsAsText(regulatedOnly = false) {
           krParts.push(r.uniqueNo ? `${p} (${r.uniqueNo})` : p);
         });
         if (kr.existingChemical && kr.existingChemical.matched) {
-          krParts.push(`기존화학물질(${kr.existingChemical.keNo})`);
+          const no = kr.existingChemical.korexst;
+          krParts.push(no ? `기존(${no})` : '기존(번호 미확인)');
         }
         if (!krParts.length) krParts.push('규제기준 비해당');
       }
@@ -1188,18 +1369,11 @@ function renderPermittedTable() {
   const body = document.getElementById('permittedTableBody');
   if (!body) return;
 
-  const casQ = (document.getElementById('permittedSearchCas')?.value || '').trim().toLowerCase();
-  const unqQ = (document.getElementById('permittedSearchUnq')?.value || '').trim().toLowerCase();
-
-  const filtered = permittedItems.filter((it) =>
-    (!casQ || it.casNo.toLowerCase().includes(casQ)) &&
-    (!unqQ || it.uniqueNo.toLowerCase().includes(unqQ))
-  );
-
-  if (!filtered.length) {
-    body.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px">등록된 항목이 없습니다.</td></tr>`;
+  if (!permittedItems.length) {
+    const emptyMsg = '등록된 사내 허가 화학물질이 없습니다.<br>위 입력란에 CAS 번호와 유해화학물질 고유번호를 입력해 주세요.';
+    body.innerHTML = `<tr><td colspan="3"><div class="permitted-empty">${emptyMsg}</div></td></tr>`;
   } else {
-    body.innerHTML = filtered.map((it) => `
+    body.innerHTML = permittedItems.map((it) => `
       <tr>
         <td class="td-cas">${escHtml(it.casNo)}</td>
         <td>${escHtml(it.uniqueNo)}</td>
@@ -1210,12 +1384,10 @@ function renderPermittedTable() {
   }
 
   const countEl = document.getElementById('permittedCount');
-  if (countEl) {
-    countEl.textContent = `등록 ${permittedItems.length}건` +
-      (filtered.length !== permittedItems.length ? ` (검색결과 ${filtered.length}건)` : '');
-  }
+  if (countEl) countEl.textContent = `등록 ${permittedItems.length}건`;
 }
 
+/** @returns {Promise<boolean>} 저장 성공 여부 */
 async function submitPermittedRequest(mode, items) {
   const msgBox = document.getElementById('permittedMsgBox');
   if (msgBox) msgBox.innerHTML = '⏳ 저장 중...';
@@ -1238,78 +1410,58 @@ async function submitPermittedRequest(mode, items) {
         }
         msgBox.innerHTML = msg;
       }
-      return;
+      return false;
     }
 
     permittedItems = d.items || [];
-    permittedSet = new Set(permittedItems.map((it) => compositeKey(it.casNo, it.uniqueNo)));
+    rebuildPermittedIndexes();
     permittedUnavailable = false;
 
-    let msg = `✅ 저장 완료 (현재 ${permittedItems.length}건)`;
-    if (d.errors && d.errors.length) {
-      msg += `<div style="color:var(--orange);margin-top:6px">⚠️ 일부 행 저장 실패</div>` +
-        `<ul class="permitted-errors">` +
-        d.errors.map((e) => `<li>${e.row}행: ${escHtml(e.reason)}</li>`).join('') + `</ul>`;
-    }
-    if (msgBox) msgBox.innerHTML = msg;
+    if (msgBox) msgBox.innerHTML = `✅ 저장 완료 (현재 ${permittedItems.length}건)`;
     renderPermittedTable();
+    return true;
   } catch (e) {
     if (msgBox) msgBox.innerHTML = `<div class="err-box">저장 실패: ${escHtml(e.message || '')}</div>`;
+    return false;
   }
 }
 
-function addPermittedSingle() {
+async function addPermittedSingle() {
   const casEl = document.getElementById('permittedNewCas');
   const unqEl = document.getElementById('permittedNewUnq');
-  const cas = casEl?.value || '';
-  const unq = unqEl?.value || '';
-  if (!cas.trim() || !unq.trim()) { alert('CAS 번호와 유해화학물질 고유번호를 모두 입력하세요.'); return; }
-  submitPermittedRequest('append', [{ casNo: cas, uniqueNo: unq }]);
-  if (casEl) casEl.value = '';
-  if (unqEl) unqEl.value = '';
-}
+  const msgBox = document.getElementById('permittedMsgBox');
 
-function parseBulkPermittedText(text) {
-  const lines = text.replace(/\r\n/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean);
-  const items = [];
-  lines.forEach((line, idx) => {
-    if (idx === 0 && /cas/i.test(line) && /(고유번호|unique)/i.test(line)) return; // 헤더 줄 스킵
-    const parts = line.includes(',') ? line.split(',') : line.split(/\t|\s{2,}/);
-    if (parts.length < 2) return;
-    items.push({ casNo: parts[0], uniqueNo: parts[1] });
-  });
-  return items;
-}
+  const cas = normalizeCas(casEl?.value);
+  const unq = normalizeUniqueNo(unqEl?.value);
 
-function submitPermittedBulk(mode) {
-  const textEl = document.getElementById('permittedBulkText');
-  const items = parseBulkPermittedText(textEl?.value || '');
-  if (!items.length) { alert('입력된 항목이 없습니다.'); return; }
-  if (mode === 'replace' && !confirm('전체 목록을 여기 입력한 내용으로 교체합니다. 계속할까요?')) return;
-  submitPermittedRequest(mode, items);
-}
+  if (!cas || !unq) {
+    if (msgBox) msgBox.innerHTML = `<div class="err-box">CAS 번호와 유해화학물질 고유번호를 모두 입력하세요.</div>`;
+    return;
+  }
+  if (!isValidCasFormat(cas)) {
+    if (msgBox) msgBox.innerHTML = `<div class="err-box">CAS 번호 형식이 올바르지 않습니다: ${escHtml(cas)}</div>`;
+    return;
+  }
+  if (isKeNumber(unq)) {
+    if (msgBox) msgBox.innerHTML = `<div class="err-box">기존화학물질(KE) 번호는 유해화학물질 고유번호가 아니므로 등록할 수 없습니다.</div>`;
+    return;
+  }
+  if (permittedCompositeSet.has(compositeKey(cas, unq))) {
+    if (msgBox) msgBox.innerHTML = `<div class="err-box">이미 등록된 조합입니다: ${escHtml(cas)} / ${escHtml(unq)}</div>`;
+    return;
+  }
 
-function handlePermittedCsvUpload(evt) {
-  const file = evt.target.files && evt.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const textEl = document.getElementById('permittedBulkText');
-    if (textEl) textEl.value = String(reader.result || '');
-  };
-  reader.readAsText(file, 'utf-8');
-  evt.target.value = '';
+  const ok = await submitPermittedRequest('append', [{ casNo: cas, uniqueNo: unq }]);
+  if (ok) {
+    if (casEl) casEl.value = '';
+    if (unqEl) unqEl.value = '';
+    casEl?.focus();
+  }
 }
 
 function deletePermittedItem(cas, unq) {
   if (!confirm(`${cas} / ${unq} 항목을 삭제할까요?`)) return;
   submitPermittedRequest('delete', [{ casNo: cas, uniqueNo: unq }]);
-}
-
-function downloadPermittedCsv() {
-  const rows = ['cas_no,unique_no', ...permittedItems.map((it) => `${it.casNo},${it.uniqueNo}`)];
-  const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
-  downloadBlob(blob, 'permitted_chems.csv');
 }
 
 
@@ -1318,7 +1470,8 @@ function downloadPermittedCsv() {
    ─────────────────────────────────────────────────────────
    docxtemplater/PizZip을 CDN에서 로드해 브라우저에서 직접 생성한다
    (index.html에 <script> 태그로 포함되어 있어야 함).
-   환경(K-REACH) 문서와 산안법(KOSHA) 문서 두 개를 순차 다운로드한다.
+   환경(K-REACH) LOC와 보건(KOSHA) LOC는 서로 다른 버튼·템플릿·파일명을
+   쓰는 별도 문서다(generateEnvLoc / generateHealthLoc).
 
    v_acc(사고대비물질) 플래그는 K-REACH 사고대비물질만 반영한다.
    KOSHA 특별관리물질은 별개 법령(산업안전보건법)이므로 의도적으로
@@ -1355,12 +1508,29 @@ function renderDocxFromTemplate(arrayBuffer, data) {
   });
 }
 
+/**
+ * 환경 LOC {max} 태그용 — 원래 부등호는 표시하지 않고 최대값에서 0.01을 뺀다.
+ * 예: ≤100 → 99.99, <80 → 79.99
+ */
+function formatLocMax(maxValue) {
+  if (maxValue === '' || maxValue == null) return '';
+  const normalized = String(maxValue).trim().replace(/^[<≤>≥]+/, '');
+  if (!normalized) return '';
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) return '';
+  return (Math.round((numeric - 0.01) * 100) / 100).toFixed(2);
+}
+
 function buildLocComps(comps) {
   return (comps || []).map((comp) => {
     const kr = (comp.kr && comp.kr.success) ? comp.kr : {};
     const ko = (comp.ko && comp.ko.success) ? comp.ko : {};
-    const name = (kr.chemicalNameKor || kr.chemicalNameEn || comp.cas || '').trim();
+    // 환경 LOC 1열에는 API가 반환한 영문 화학물질명만 사용한다.
+    // 한글명·CAS 번호 등은 영문명 대체값으로 넣지 않는다.
+    const name = (kr.chemicalNameEn || '').trim();
 
+    // LOC의 유해성 체크(V)는 사내 허가목록 일치 여부와 무관하게 항상
+    // 원래 K-REACH/KOSHA 조회 결과(raw)를 그대로 사용한다(comp.verdict 미참조).
     const isToxic = (kr.regulations || []).some((r) => r.type === '유독물질' && r.matchedByContent);
     const hasHazardCat = (cat) => (kr.regulations || []).some((r) => r.hazardCategory === cat && r.matchedByContent);
     const hasType = (type) => (kr.regulations || []).some((r) => r.type === type && r.matchedByContent);
@@ -1369,7 +1539,7 @@ function buildLocComps(comps) {
       name,
       cas: comp.cas || '',
       min: comp.min != null ? String(comp.min) : '',
-      max: comp.max != null ? String(comp.max) : '',
+      max: formatLocMax(comp.max),
       p_n: kr.existingChemical && kr.existingChemical.matched ? 'P' : 'N',
       v_acute:   (isToxic || hasHazardCat('급성')) ? 'V' : '',
       v_chronic: (isToxic || hasHazardCat('만성')) ? 'V' : '',
@@ -1382,13 +1552,19 @@ function buildLocComps(comps) {
   });
 }
 
-async function generateLoc(sheetIndex) {
+function locErrorDetail(e) {
+  return e && e.properties && e.properties.errors
+    ? e.properties.errors.map((x) => x.message || x.name).join(', ')
+    : (e && e.message) || String(e);
+}
+
+async function generateEnvLoc(sheetIndex) {
   const sheet = lastResultData && lastResultData[sheetIndex];
   if (!sheet) return;
 
-  const btn = document.getElementById('locBtn-' + sheetIndex);
+  const btn = document.getElementById('locEnvBtn-' + sheetIndex);
   const origTxt = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ LOC 생성 중...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 생성 중...'; }
 
   try {
     if (!window.PizZip || !window.docxtemplater) {
@@ -1401,20 +1577,37 @@ async function generateLoc(sheetIndex) {
 
     const envBuf = await loadTemplateArrayBuffer(encodeURI('/Letter_of_Confirmation(environment).docx'));
     const envBlob = renderDocxFromTemplate(envBuf, { product_name: productName, comps });
-    downloadBlob(envBlob, `LOC_${fileBase}_environment.docx`);
+    downloadBlob(envBlob, `LOC_환경_${fileBase}.docx`);
+  } catch (e) {
+    alert('환경 LOC 생성 실패: ' + locErrorDetail(e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origTxt || '📄 환경 LOC 다운로드'; }
+  }
+}
 
-    await new Promise((r) => setTimeout(r, 400));
+/** 보건 LOC는 현재 템플릿의 {product_name} 태그를 채워 그대로 다운로드한다. */
+async function generateHealthLoc(sheetIndex) {
+  const sheet = lastResultData && lastResultData[sheetIndex];
+  if (!sheet) return;
 
+  const btn = document.getElementById('locHealthBtn-' + sheetIndex);
+  const origTxt = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 생성 중...'; }
+
+  try {
+    if (!window.PizZip || !window.docxtemplater) {
+      throw new Error('LOC 생성 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.');
+    }
+
+    const productName = sheet.filename || 'MSDS';
+    const fileBase = safeFileName(productName);
     const healthBuf = await loadTemplateArrayBuffer(encodeURI('/Letter_of_Confirmation(health).docx'));
     const healthBlob = renderDocxFromTemplate(healthBuf, { product_name: productName });
-    downloadBlob(healthBlob, `LOC_${fileBase}_health.docx`);
+    downloadBlob(healthBlob, `LOC_보건_${fileBase}.docx`);
   } catch (e) {
-    const detail = e && e.properties && e.properties.errors
-      ? e.properties.errors.map((x) => x.message || x.name).join(', ')
-      : (e && e.message) || String(e);
-    alert('LOC 생성 실패: ' + detail);
+    alert('보건 LOC 생성 실패: ' + locErrorDetail(e));
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = origTxt || '📄 LOC 확인서(Word) 다운로드'; }
+    if (btn) { btn.disabled = false; btn.textContent = origTxt || '📄 보건 LOC 다운로드'; }
   }
 }
 
