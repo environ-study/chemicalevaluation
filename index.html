@@ -175,40 +175,27 @@
       <button class="modal-close" onclick="closePermittedModal()">✕</button>
     </div>
     <div class="modal-body">
-      <div class="permitted-toolbar">
-        <span id="permittedCount">등록 0건</span>
-        <input type="text" id="permittedSearchCas" placeholder="CAS 번호 검색" oninput="renderPermittedTable()">
-        <input type="text" id="permittedSearchUnq" placeholder="유해화학물질 고유번호 검색" oninput="renderPermittedTable()">
-        <button class="copy-result-btn" onclick="downloadPermittedCsv()">⬇ CSV 다운로드</button>
-      </div>
-
       <div class="permitted-add-row">
         <input type="text" id="permittedNewCas" placeholder="CAS 번호 (예: 108173-90-6)">
         <input type="text" id="permittedNewUnq" placeholder="유해화학물질 고유번호 (예: 97-1-4)">
         <button class="copy-result-btn" onclick="addPermittedSingle()">+ 등록</button>
       </div>
 
-      <div class="permitted-bulk">
-        <textarea id="permittedBulkText" rows="4" placeholder="CAS 번호,유해화학물질 고유번호&#10;108173-90-6,97-1-4&#10;544-92-3,97-1-90"></textarea>
-        <div class="permitted-bulk-actions">
-          <label class="permitted-file-label">
-            CSV 업로드
-            <input type="file" id="permittedCsvFile" accept=".csv,text/csv" onchange="handlePermittedCsvUpload(event)">
-          </label>
-          <button class="copy-result-btn" onclick="submitPermittedBulk('append')">기존 목록에 추가</button>
-          <button class="copy-result-btn" style="background:linear-gradient(90deg,#b91c1c,#7f1d1d)" onclick="submitPermittedBulk('replace')">전체 목록 교체</button>
-        </div>
-      </div>
-
       <div id="permittedMsgBox" class="permitted-msg-box"></div>
 
-      <div class="tbl-wrap" style="max-height:340px">
+      <div class="permitted-toolbar">
+        <span id="permittedCount">등록 0건</span>
+        <input type="text" id="permittedSearchCas" placeholder="CAS 번호 검색" oninput="renderPermittedTable()">
+        <input type="text" id="permittedSearchUnq" placeholder="유해화학물질 고유번호 검색" oninput="renderPermittedTable()">
+      </div>
+
+      <div class="permitted-tbl-wrap">
         <table class="reg" id="permittedTable">
           <thead>
             <tr>
               <th class="th-info">CAS 번호</th>
               <th class="th-info">유해화학물질 고유번호</th>
-              <th class="th-info" style="width:70px">삭제</th>
+              <th class="th-info">삭제</th>
             </tr>
           </thead>
           <tbody id="permittedTableBody"></tbody>

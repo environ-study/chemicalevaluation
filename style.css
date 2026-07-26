@@ -899,8 +899,7 @@ code {
 .modal-box {
   background: var(--white);
   border-radius: var(--r);
-  width: 100%;
-  max-width: 760px;
+  width: min(1050px, calc(100vw - 32px));
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -916,6 +915,7 @@ code {
   color: #fff;
   font-weight: 700;
   font-size: 14px;
+  flex-shrink: 0;
 }
 .modal-close {
   background: none;
@@ -927,35 +927,19 @@ code {
 }
 .modal-body {
   padding: 14px 16px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.permitted-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--muted);
-}
-.permitted-toolbar input {
-  flex: 1;
-  min-width: 140px;
-  padding: 6px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  font-size: 12px;
-  font-family: inherit;
+  min-height: 600px;
+  max-height: calc(90vh - 48px); /* modal-head 높이 제외 */
+  overflow: hidden; /* 본문 자체는 스크롤하지 않음 — 목록 영역만 스크롤 */
 }
 
 .permitted-add-row {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .permitted-add-row input {
   flex: 1;
@@ -967,43 +951,28 @@ code {
   font-family: inherit;
 }
 
-.permitted-bulk {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px dashed var(--border);
-  border-radius: var(--r);
-  padding: 10px;
-}
-.permitted-bulk textarea {
-  width: 100%;
-  resize: vertical;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  font-size: 12px;
-  font-family: monospace;
-}
-.permitted-bulk-actions {
+.permitted-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-.permitted-file-label {
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--muted);
+  flex-shrink: 0;
+}
+.permitted-toolbar input {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: var(--r);
-  padding: 6px 10px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 400;
 }
-.permitted-file-label input[type="file"] { font-size: 11px; max-width: 160px; }
 
-.permitted-msg-box { font-size: 12px; line-height: 1.6; }
+.permitted-msg-box { font-size: 12px; line-height: 1.6; flex-shrink: 0; }
 .permitted-msg-box .err-box { margin: 0; }
 .permitted-errors {
   margin: 4px 0 0 18px;
@@ -1011,7 +980,41 @@ code {
   font-size: 11px;
 }
 
+/* ── 사내 허가목록 테이블 — 팝업 폭 안에서만, 가로 스크롤 금지 ── */
+.permitted-tbl-wrap {
+  flex: 1;
+  min-height: 0; /* flex 자식이 넘칠 때만 세로 스크롤되도록 하는 핵심 값 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+#permittedTable {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+#permittedTable th:nth-child(1), #permittedTable td:nth-child(1) { width: 42%; }
+#permittedTable th:nth-child(2), #permittedTable td:nth-child(2) { width: 42%; }
+#permittedTable th:nth-child(3), #permittedTable td:nth-child(3) { width: 16%; }
+#permittedTable td {
+  white-space: normal;
+  word-break: break-all;
+}
+#permittedTable .rm-btn {
+  padding: 2px 7px;
+  font-size: 11px;
+}
+.permitted-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
 @media (max-width: 640px) {
-  .modal-box { max-width: 100%; }
+  .modal-box { width: calc(100vw - 16px); }
+  .modal-body { min-height: 70vh; }
   .permitted-toolbar, .permitted-add-row { flex-direction: column; align-items: stretch; }
 }
