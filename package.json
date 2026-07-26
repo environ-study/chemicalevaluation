@@ -1,0 +1,13 @@
+{
+  "name": "chemicalevaluation-msds-portal",
+  "version": "2.0.0",
+  "private": true,
+  "description": "MSDS 화평법(K-REACH)·산안법(KOSHA) 분석 포털 — Vercel Serverless",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@vercel/kv": "^2.0.0",
+    "fast-xml-parser": "^4.5.0"
+  }
+}

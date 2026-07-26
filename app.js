@@ -3,104 +3,109 @@
 
    [구조 개요]
    1. 상수/전역 상태
-   2. 서버 연결 확인
+   2. 사내 허가목록 로드 + 서버 상태 표시
    3. MSDS 시트 관리 (addMsdsSheet / removeMsdsSheet)
    4. 직접입력 행 관리 (addManualRow)
    5. 키보드 탐색 (화살표키 / Tab / Enter)
-   6. CAS 번호 자동 포맷 (formatCAS / onCASInput)
-   7. 분석 실행 (doManual → fetch → renderAll)
-   8. 결과 렌더링 헬퍼 함수들
-   9. 에러 표시 / 유틸
+   6. 붙여넣기 파싱 (parseFlexibleLine 등)
+   7. CAS 번호 자동 포맷 (formatCAS / onCASInput)
+   8. 분석 실행 (doManual → /api/kreach·/api/kosha 병렬 조회)
+   9. 4단계 구매 판정 (decidePurchase)
+   10. 결과 렌더링 (renderAll + 셀 빌더)
+   11. 사내 허가목록 관리 모달
+   12. LOC(Word) 확인서 자동 생성
+   13. 에러 표시 / 유틸
    ============================================================ */
 
+/* shared/normalize.js(UMD)가 app.js보다 먼저 로드되어 있어야 한다 */
+const { normalizeCas, isValidCasFormat, normalizeUniqueNo, isKeNumber, compositeKey } = window.ChemNormalize;
 
 /* ═══════════════════════════════════════════════════════════
    1. 상수 / 전역 상태
-   ─────────────────────────────────────────────────────────
-   PROXY: Flask 서버 주소 (배포 시 실제 도메인으로 교체)
-   sheetId, rowId: 시트·행 고유 ID 카운터
    ═══════════════════════════════════════════════════════════ */
-const PROXY = 'https://chemicalevaluation-api.onrender.com';
-
 let sheetId = 0;   // MSDS 시트 순번
 let rowId   = 0;   // 입력 행 순번
-let lastResultData = null;  // 마지막 분석 결과 (텍스트 복사용)
+let lastResultData = null;  // 마지막 분석 결과(시트 배열) — 복사/LOC 생성용
+
+// 사내 허가 화학물질 목록 전역 상태
+let permittedItems = [];          // [{casNo, uniqueNo}, ...]
+let permittedSet = new Set();     // "cas|uniqueNo" 복합키 Set
+let permittedUnavailable = false; // 목록 로드 실패 여부(분석은 계속 가능)
 
 // CAS 검색 히스토리 (localStorage 기반)
 const CAS_HISTORY_KEY = 'cas_history';
 
-// 1. 데이터 구조 변경: { "CAS번호": { count: 횟수, lastUsed: 시간 } }
 function getCasHistory() {
   try { return JSON.parse(localStorage.getItem(CAS_HISTORY_KEY) || '{}'); }
   catch { return {}; }
 }
 
-// 2. 기록 시 '시간' 정보 업데이트 추가
 function recordCas(cas) {
   if (!cas || cas.length < 5) return;
   const h = getCasHistory();
-  
-  if (!h[cas]) {
-    h[cas] = { count: 0, lastUsed: 0 };
-  }
-  
+  if (!h[cas]) h[cas] = { count: 0, lastUsed: 0 };
   h[cas].count += 1;
-  h[cas].lastUsed = Date.now(); // 현재 시간을 밀리초로 저장
-  
+  h[cas].lastUsed = Date.now();
   localStorage.setItem(CAS_HISTORY_KEY, JSON.stringify(h));
 }
 
-// 3. 필터링: 4회 이상 검색된 것 중 '최신순'으로 상위 10개 추출
 function getFrequentCas(minCount = 4) {
   const h = getCasHistory();
   return Object.entries(h)
-    .filter(([, data]) => data.count >= minCount) // 4회 이상 필터링
-    .sort((a, b) => b[1].lastUsed - a[1].lastUsed) // 전체 히스토리 중 최신 검색 순 정렬
-    .slice(0, 5) // 너무 많지 않게 최대 10개만
-    .map(([cas]) => [cas, h[cas].count]); // 기존 UI 호환을 위해 [CAS, 횟수] 형태로 반환
+    .filter(([, data]) => data.count >= minCount)
+    .sort((a, b) => b[1].lastUsed - a[1].lastUsed)
+    .slice(0, 5)
+    .map(([cas]) => [cas, h[cas].count]);
 }
 
 /* ═══════════════════════════════════════════════════════════
-   2. 서버 연결 확인
+   2. 사내 허가목록 로드 + 서버 상태 표시
    ─────────────────────────────────────────────────────────
-   페이지 로드 시 Flask 프록시 서버의 / 엔드포인트를 호출하여
-   K-REACH / KOSHA 서비스 정상 여부를 상태 바에 표시합니다.
+   별도 헬스체크 엔드포인트 대신, 페이지 로드시 어차피 필요한
+   GET /api/permitted-chems 호출 성공 여부로 서버 상태를 표시한다.
+   목록 로드에 실패해도 분석 자체는 계속 진행 가능하며, 이 경우
+   허가 여부 판정은 "검토 필요(확인 불가)"로 처리된다.
    ═══════════════════════════════════════════════════════════ */
-async function checkServer() {
+async function loadPermittedListAndStatus() {
   const txt = document.getElementById('srvTxt');
   const bar = document.getElementById('srvBar');
-  txt.textContent = '서버 연결 확인 중... (최대 60초 소요)';
+  if (txt) txt.textContent = '사내 허가목록 확인 중...';
+
   try {
-    const r = await fetch(PROXY + '/', { signal: AbortSignal.timeout(60000) });
+    const r = await fetch('/api/permitted-chems', { signal: AbortSignal.timeout(15000) });
     const d = await r.json();
-    const ok = d.services?.kreach === '정상' && d.services?.kosha === '정상';
-    txt.textContent = ok ? '✅ 서버 정상 — K-REACH · KOSHA 준비됨' : '⚠️ 서버 연결됨 (일부 서비스 점검 중)';
-    if (bar) bar.style.color = ok ? 'var(--green)' : 'var(--orange)';
-  } catch {
-    txt.textContent = '❌ 서버 연결 실패 (재시도 중...)';
-    if (bar) bar.style.color = 'var(--red)';
-    setTimeout(checkServer, 10000);
+    if (!d.success) throw new Error(d.message || '허가목록 조회 실패');
+
+    permittedItems = d.items || [];
+    permittedSet = new Set(permittedItems.map((it) => compositeKey(it.casNo, it.uniqueNo)));
+    permittedUnavailable = false;
+
+    if (txt) txt.textContent = `✅ 서버 정상 — 사내 허가목록 ${permittedItems.length}건 로드됨`;
+    if (bar) bar.style.color = 'var(--green)';
+  } catch (e) {
+    permittedUnavailable = true;
+    permittedItems = [];
+    permittedSet = new Set();
+    if (txt) txt.textContent = '⚠️ 사내 허가목록을 불러오지 못했습니다 (분석은 계속 가능 / 허가 여부는 검토필요로 표시)';
+    if (bar) bar.style.color = 'var(--orange)';
   }
+
+  renderPermittedTable();
 }
 
 
 /* ═══════════════════════════════════════════════════════════
    3. MSDS 시트 관리
-   ─────────────────────────────────────────────────────────
-   addMsdsSheet(name)  : 시트(카드) 1개를 DOM에 추가
-   removeMsdsSheet(sid): 해당 시트를 DOM에서 제거
    ═══════════════════════════════════════════════════════════ */
 function addMsdsSheet(name) {
   sheetId++;
   const sid = sheetId;
   const container = document.getElementById('msdsSheets');
 
-  /* 외부 시트 div */
   const sheet = document.createElement('div');
   sheet.className = 'msds-sheet';
   sheet.id = 'sheet-' + sid;
 
-  /* 시트 헤더 (이름 입력 + 삭제 버튼) */
   const head = document.createElement('div');
   head.className = 'msds-sheet-head';
   head.innerHTML = `
@@ -108,7 +113,6 @@ function addMsdsSheet(name) {
     <button class="msds-rm-btn" onclick="removeMsdsSheet(${sid})">✕ 시트 삭제</button>
   `;
 
-  /* 시트 바디 (열 헤더 + 행 컨테이너 + 행 추가 버튼) */
   const body = document.createElement('div');
   body.className = 'msds-sheet-body';
   body.id = 'sheet-body-' + sid;
@@ -130,7 +134,6 @@ function addMsdsSheet(name) {
   sheet.appendChild(body);
   container.appendChild(sheet);
   renderCasHistoryBar(sid);
-  /* 첫 행 자동 추가 */
   addManualRow(sid, '', null, null, false);
 }
 
@@ -139,7 +142,6 @@ function removeMsdsSheet(sid) {
   if (el) el.remove();
 }
 
-/* 시트 내 행 번호 일괄 갱신 */
 function renumberSheet(sid) {
   const rowsDiv = document.getElementById('rows-' + sid);
   if (!rowsDiv) return;
@@ -152,13 +154,6 @@ function renumberSheet(sid) {
 
 /* ═══════════════════════════════════════════════════════════
    4. 직접입력 행 관리
-   ─────────────────────────────────────────────────────────
-   addManualRow(sid, cas, min, max, isLt)
-     sid  : 부모 시트 ID
-     cas  : CAS 번호 초기값
-     min  : 최소 함량 (null 허용)
-     max  : 최대 함량 (null 허용)
-     isLt : true = 미만(<) 체크 상태
    ═══════════════════════════════════════════════════════════ */
 function addManualRow(sid, cas, min, max, isLt) {
   const id = ++rowId;
@@ -170,12 +165,10 @@ function addManualRow(sid, cas, min, max, isLt) {
   row.id = 'mrow-' + id;
   row.dataset.sheet = sid;
 
-  /* 행 번호 */
   const numSpan = document.createElement('span');
   numSpan.className = 'row-num';
   numSpan.textContent = '·';
 
-  /* CAS 번호 입력 */
   const casInput = document.createElement('input');
   casInput.type = 'text';
   casInput.placeholder = '예: 108-88-3';
@@ -185,7 +178,6 @@ function addManualRow(sid, cas, min, max, isLt) {
   casInput.setAttribute('oninput', 'onCASInput(this)');
   casInput.setAttribute('autocomplete', 'off');
 
-  /* 최소 함량 */
   const minInput = document.createElement('input');
   minInput.type = 'number';
   minInput.placeholder = '0';
@@ -193,7 +185,6 @@ function addManualRow(sid, cas, min, max, isLt) {
   minInput.value = (min !== null && min !== '') ? min : '';
   minInput.id = 'min-' + id;
 
-  /* 최대 함량 */
   const maxInput = document.createElement('input');
   maxInput.type = 'number';
   maxInput.placeholder = '100';
@@ -201,7 +192,6 @@ function addManualRow(sid, cas, min, max, isLt) {
   maxInput.value = (max !== null && max !== '') ? max : '';
   maxInput.id = 'max-' + id;
 
-  /* 미만 체크박스 */
   const label = document.createElement('label');
   label.className = 'lt-label';
   label.title = '체크 = 미만(< 최대값 미포함) / 미체크 = 이하(≤ 최대값 포함)';
@@ -223,7 +213,6 @@ function addManualRow(sid, cas, min, max, isLt) {
   label.appendChild(cb);
   label.appendChild(ltTxt);
 
-  /* 행 삭제 버튼 */
   const rmBtn = document.createElement('button');
   rmBtn.className = 'rm-btn';
   rmBtn.title = '삭제';
@@ -243,11 +232,6 @@ function addManualRow(sid, cas, min, max, isLt) {
 
 /* ═══════════════════════════════════════════════════════════
    5. 키보드 탐색
-   ─────────────────────────────────────────────────────────
-   직접입력 행 안에서:
-     Tab / Enter → 다음 셀 (행 끝이면 다음 행 첫 셀)
-     ← → → 같은 행 이전/다음 입력
-     ↑ ↓ → 같은 열의 위/아래 행
    ═══════════════════════════════════════════════════════════ */
 document.addEventListener('keydown', function (e) {
   const el = e.target;
@@ -258,45 +242,31 @@ document.addEventListener('keydown', function (e) {
   const rowsDiv = row.parentElement;
   let allRows = [...rowsDiv.querySelectorAll('.manual-row')];
   const allInputs = [...row.querySelectorAll('input')];
-
-  // 체크박스 제외한 입력칸만 탐색 대상으로 사용
   const navInputs = allInputs.filter(input => input.type !== 'checkbox');
-
   const colIdx = navInputs.indexOf(el);
   const rowIdx = allRows.indexOf(row);
 
-  // 체크박스에 포커스돼 있으면 이 로직은 적용하지 않음
   if (el.type === 'checkbox') return;
 
   if (e.key === 'Tab' || e.key === 'Enter') {
     e.preventDefault();
-
-    // 같은 행에서 다음 일반 입력칸으로 이동
     const next = navInputs[colIdx + 1];
     if (next) {
       next.focus();
       if (next.select) next.select();
       return;
     }
-
-    // 현재가 마지막 일반 입력칸(= 최대값)이면 다음 행 CAS로 이동
     let nextRow = allRows[rowIdx + 1];
-
-    // 다음 행 없으면 새로 생성
     if (!nextRow) {
       const sid = parseInt(row.dataset.sheet, 10);
       if (!sid) return;
-
       addManualRow(sid, '', null, null, false);
-
       allRows = [...rowsDiv.querySelectorAll('.manual-row')];
       nextRow = allRows[rowIdx + 1];
     }
-
     if (nextRow) {
       const firstInput = [...nextRow.querySelectorAll('input')]
         .find(input => input.type !== 'checkbox');
-
       if (firstInput) {
         firstInput.focus();
         if (firstInput.select) firstInput.select();
@@ -308,7 +278,6 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'ArrowRight') {
     const atEnd = el.type === 'number' ? true : el.selectionStart === el.value.length;
     if (!atEnd) return;
-
     const next = navInputs[colIdx + 1];
     if (next) {
       e.preventDefault();
@@ -321,7 +290,6 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'ArrowLeft') {
     const atStart = el.type === 'number' ? true : el.selectionStart === 0;
     if (!atStart) return;
-
     const prev = navInputs[colIdx - 1];
     if (prev) {
       e.preventDefault();
@@ -336,13 +304,10 @@ document.addEventListener('keydown', function (e) {
 
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
-
     const targetRow = allRows[rowIdx + (e.key === 'ArrowDown' ? 1 : -1)];
     if (!targetRow) return;
-
     const targetNavInputs = [...targetRow.querySelectorAll('input')]
       .filter(input => input.type !== 'checkbox');
-
     const targetEl = targetNavInputs[colIdx] || targetNavInputs[0];
     if (targetEl) {
       targetEl.focus();
@@ -351,7 +316,6 @@ document.addEventListener('keydown', function (e) {
   }
 });
 
-// CAS 히스토리 바 렌더링 (시트 상단)
 function renderCasHistoryBar(sid) {
   const bar = document.getElementById('cas-hist-' + sid);
   if (!bar) return;
@@ -366,7 +330,6 @@ function renderCasHistoryBar(sid) {
     ).join('');
 }
 
-// 모든 시트의 히스토리 바 갱신
 function refreshAllHistoryBars() {
   document.querySelectorAll('[id^="cas-hist-"]').forEach(el => {
     const sid = el.id.replace('cas-hist-', '');
@@ -374,7 +337,6 @@ function refreshAllHistoryBars() {
   });
 }
 
-// + 키 → 현재 포커스된 행의 시트에 행 추가
 document.addEventListener('keydown', function(e) {
   if (e.key !== '+') return;
   const el = document.activeElement;
@@ -385,7 +347,6 @@ document.addEventListener('keydown', function(e) {
   if (sid) addManualRow(parseInt(sid), '', null, null, false);
 });
 
-// - 키 → 현재 시트의 비어있는 마지막 행 삭제
 document.addEventListener('keydown', function(e) {
   if (e.key !== '-') return;
   const el = document.activeElement;
@@ -397,22 +358,17 @@ document.addEventListener('keydown', function(e) {
   const rowsDiv = document.getElementById('rows-' + sid);
   if (!rowsDiv) return;
   const allRows = [...rowsDiv.querySelectorAll('.manual-row')];
-  // 뒤에서부터 CAS번호가 비어있는 행 찾아서 삭제
   for (let i = allRows.length - 1; i >= 0; i--) {
     const targetRow = allRows[i];
     const id = targetRow.id?.replace('mrow-', '');
     const casVal = document.getElementById('cas-' + id)?.value.trim();
-
     if (!casVal) {
       const isFocusedRow = targetRow === row;
-
-      // 삭제 대상이 현재 포커스된 행이면 먼저 윗행으로 포커스 이동
       if (isFocusedRow) {
         const prevRow = allRows[i - 1];
         if (prevRow) {
           const prevInput = [...prevRow.querySelectorAll('input')]
             .find(input => input.type !== 'checkbox');
-
           if (prevInput) {
             prevInput.focus();
             if (prevInput.select) prevInput.select();
@@ -420,11 +376,15 @@ document.addEventListener('keydown', function(e) {
         }
         targetRow.remove();
         break;
-        }
       }
     }
-  });
+  }
+});
 
+
+/* ═══════════════════════════════════════════════════════════
+   6. 붙여넣기 파싱
+   ═══════════════════════════════════════════════════════════ */
 document.addEventListener('paste', function (e) {
   const el = e.target;
   const row = el.closest('.manual-row');
@@ -450,41 +410,29 @@ document.addEventListener('paste', function (e) {
   const currentInputs = [...row.querySelectorAll('input')];
   const startColIdx = currentInputs.indexOf(el);
 
-  // 1) 세로 나열 다중 MSDS 먼저 판별
   const multiBlocks = parseVerticalMultiMsds(text);
 
-  // 다중 MSDS인 경우:
-  // - 첫 번째 블록은 현재 시트
-  // - 두 번째부터는 새 시트 자동 생성
   if (multiBlocks.length >= 2) {
     multiBlocks.forEach((block, idx) => {
       let targetSid;
-
       if (idx === 0) {
         targetSid = sid;
-
         const titleInput = document.querySelector(`#sheet-${targetSid} .msds-sheet-head input`);
         if (titleInput && !titleInput.value.trim() && block.title) {
           titleInput.value = block.title;
         }
-
         fillSheetRows(targetSid, block.rows, startRowIdx, startColIdx);
       } else {
         addMsdsSheet(block.title || '');
         targetSid = sheetId;
-
-        // 새 시트는 기본 1행이 이미 생성되므로 0행부터 채우면 됨
         fillSheetRows(targetSid, block.rows, 0, 0);
       }
     });
-
     return;
   }
 
-  // 2) 단일 MSDS는 기존 로직대로 처리
   const parsed = parsePastedTable(text);
   const table = parsed.rows || [];
-
   if (!table.length) return;
 
   if (parsed.title) {
@@ -497,15 +445,6 @@ document.addEventListener('paste', function (e) {
   fillSheetRows(sid, table, startRowIdx, startColIdx);
 });
 
-
-// 세로 나열된 다중 MSDS 붙여넣기 파서
-// 예:
-// Sample MSDS
-// 108883 13 20
-// 1330207 1 8
-// Sample MSDS2
-// 13463677 13 20
-// 1316297 1 8
 function parseVerticalMultiMsds(text) {
   const lines = text
     .replace(/\r\n/g, '\n')
@@ -520,76 +459,53 @@ function parseVerticalMultiMsds(text) {
   let current = null;
 
   for (const line of lines) {
-    // 제목줄이면 새 블록 시작
     if (isTitleLine(line)) {
-      if (current && current.rows.length) {
-        blocks.push(current);
-      }
-      current = {
-        title: line,
-        rows: []
-      };
+      if (current && current.rows.length) blocks.push(current);
+      current = { title: line, rows: [] };
       continue;
     }
-
-    // 데이터줄
     const parsed = parseFlexibleLine(line);
-
     if (looksLikeParsedDataRow(parsed)) {
-      // 제목 없이 데이터가 먼저 나오면 현재 블록 생성
-      if (!current) {
-        current = {
-          title: '',
-          rows: []
-        };
-      }
-
+      if (!current) current = { title: '', rows: [] };
       current.rows.push(normalizeDataRow(parsed));
     }
   }
 
-  // 마지막 블록 마무리
-  if (current && current.rows.length) {
-    blocks.push(current);
-  }
+  if (current && current.rows.length) blocks.push(current);
 
-  // 제목 2개 이상이거나, 제목 있는 블록이 2개 이상일 때만 "다중 MSDS"로 인정
   const titledCount = blocks.filter(b => (b.title || '').trim()).length;
-  if (blocks.length >= 2 && titledCount >= 2) {
-    return blocks;
-  }
-
+  if (blocks.length >= 2 && titledCount >= 2) return blocks;
   return [];
 }
 
-// parseFlexibleLine 결과가 데이터 행인지 판별
 function looksLikeParsedDataRow(parsed) {
   if (!Array.isArray(parsed) || parsed.length < 2) return false;
-
   const cas = parsed[0];
   const min = parsed[1];
   const max = parsed[2];
-
   if (!isCasLike(cas)) return false;
   if (!isNumericLike(min)) return false;
   if (max != null && max !== '' && !isNumericLike(max)) return false;
-
   return true;
 }
 
-// 데이터 행을 [cas, min, max, 미만여부?] 형태로 정리
+// 4번째 열(이하/미만 플래그) 텍스트를 판별
+// y/Y/미만/</true -> 미만(체크) / n/N/이하/<=/false/빈값 -> 이하(미체크)
+function parseLtFlag(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (v === 'y' || v === '미만' || v === '<' || v === 'true') return true;
+  return false;
+}
+
 function normalizeDataRow(parsed) {
   const row = [...parsed];
-
   const cas = row[0] ?? '';
   const min = row[1] ?? '';
   const max = row[2] ?? '';
   const flag = row[3] ?? '';
-
   return [cas, min, max, flag];
 }
 
-// 특정 시트에 rows 데이터를 채워 넣기
 function fillSheetRows(sid, rows, startRowIdx = 0, startColIdx = 0) {
   const rowsDiv = document.getElementById('rows-' + sid);
   if (!rowsDiv) return;
@@ -604,46 +520,29 @@ function fillSheetRows(sid, rows, startRowIdx = 0, startColIdx = 0) {
   rows.forEach((cols, rIdx) => {
     const targetRow = updatedRows[startRowIdx + rIdx];
     if (!targetRow) return;
-
     const inputs = [...targetRow.querySelectorAll('input')];
 
     cols.forEach((rawValue, cIdx) => {
       const colIdx = startColIdx + cIdx;
       const input = inputs[colIdx];
       if (!input) return;
-
       const value = (rawValue || '').trim();
 
       if (input.type === 'checkbox') {
-        const v = value.toLowerCase();
-        const isLt =
-          v === '미만' ||
-          v === '<' ||
-          v === 'lt' ||
-          v === 'less' ||
-          v === 'less than';
-
-        input.checked = isLt;
+        input.checked = parseLtFlag(value);
         input.dispatchEvent(new Event('change'));
         return;
       }
-
       if (input.type === 'number') {
-        const normalized = value.replace(/[^\d.\-]/g, '');
-        input.value = normalized;
+        input.value = value.replace(/[^\d.\-]/g, '');
         return;
       }
-
       input.value = value;
-
-      if (input.id.startsWith('cas-')) {
-        onCASInput(input);
-      }
+      if (input.id.startsWith('cas-')) onCASInput(input);
     });
   });
 }
 
-// 붙여넣기 텍스트를 2차원 배열로 변환
 function parsePastedTable(text) {
   const lines = text
     .replace(/\r\n/g, '\n')
@@ -657,11 +556,6 @@ function parsePastedTable(text) {
   let title = '';
   let startIdx = 0;
 
-  // 첫 줄이 제목인지 판별
-  // 조건:
-  // - 쉼표/탭이 없음
-  // - CAS + 숫자열 데이터 패턴이 아님
-  // - 글자가 하나라도 있음
   if (isTitleLine(lines[0])) {
     title = lines[0];
     startIdx = 1;
@@ -678,32 +572,21 @@ function parsePastedTable(text) {
 function isTitleLine(line) {
   const s = (line || '').trim();
   if (!s) return false;
-
-  // 탭/쉼표 있으면 일단 데이터 가능성이 높음
   if (s.includes('\t') || s.includes(',')) return false;
-
-  // 한 줄 전체가 CAS + 숫자 + 숫자 형태면 제목 아님
   if (looksLikeDataLine(s)) return false;
-
-  // 숫자만 있는 줄도 제목 아님
   if (/^[\d.\-\s]+$/.test(s)) return false;
-
-  // 한글/영문이 포함되어 있고 데이터 형식이 아니면 제목으로 간주
   return /[A-Za-z가-힣]/.test(s);
 }
 
 function looksLikeDataLine(line) {
   const parsed = parseFlexibleLine(line);
   if (parsed.length < 2) return false;
-
   const casCandidate = parsed[0];
   const num1 = parsed[1];
   const num2 = parsed[2];
-
   const casOk = isCasLike(casCandidate);
   const n1Ok = isNumericLike(num1);
   const n2Ok = num2 == null ? true : isNumericLike(num2);
-
   return casOk && n1Ok && n2Ok;
 }
 
@@ -711,21 +594,14 @@ function parseFlexibleLine(line) {
   const s = (line || '').trim();
   if (!s) return [];
 
-  // 1) CSV
   if (s.includes(',')) {
     return parseCsvLine(s).map(v => v.trim()).filter(Boolean);
   }
 
-  // 2) 탭 있으면 먼저 탭 기준 분리 후, 각 칸 내부의 다중공백도 추가 분리
   if (s.includes('\t')) {
-    const parts = s
-      .split('\t')
-      .map(v => v.trim())
-      .filter(Boolean);
-
+    const parts = s.split('\t').map(v => v.trim()).filter(Boolean);
     let expanded = [];
     for (const part of parts) {
-      // "13    20" 같이 탭 뒤에 공백 여러 칸이면 추가 분리
       if (/\s{2,}/.test(part)) {
         expanded.push(...part.split(/\s{2,}/).map(v => v.trim()).filter(Boolean));
       } else {
@@ -735,29 +611,18 @@ function parseFlexibleLine(line) {
     return normalizeRow(expanded);
   }
 
-  // 3) 공백만 있는 경우: 2칸 이상 우선, 없으면 1칸 이상
   let parts;
   if (/\s{2,}/.test(s)) {
     parts = s.split(/\s{2,}/).map(v => v.trim()).filter(Boolean);
   } else {
     parts = s.split(/\s+/).map(v => v.trim()).filter(Boolean);
   }
-
   return normalizeRow(parts);
 }
 
 function normalizeRow(parts) {
   if (!parts.length) return [];
-
-  const row = [...parts];
-
-  // 케이스:
-  // ["108883", "13", "20"] -> 그대로
-  // ["108-88-3", "13", "20"] -> 그대로
-  // ["108883", "1320"] 같은 건 손대지 않음
-  // ["108883", "13", "20", "미만"] -> 그대로 앞 4개 사용 가능
-
-  return row;
+  return [...parts];
 }
 
 function isCasLike(value) {
@@ -770,46 +635,33 @@ function isNumericLike(value) {
   if (value == null) return false;
   return /^-?\d+(?:\.\d+)?$/.test(String(value).trim());
 }
-// CSV 한 줄 파싱
-// 쉼표 안의 따옴표("...") 처리
+
 function parseCsvLine(line) {
   const result = [];
   let cur = '';
   let inQuotes = false;
-
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
     const next = line[i + 1];
-
     if (ch === '"') {
-      // "" -> 따옴표 이스케이프
-      if (inQuotes && next === '"') {
-        cur += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
+      if (inQuotes && next === '"') { cur += '"'; i++; }
+      else inQuotes = !inQuotes;
       continue;
     }
-
     if (ch === ',' && !inQuotes) {
       result.push(cur.trim());
       cur = '';
       continue;
     }
-
     cur += ch;
   }
-
   result.push(cur.trim());
   return result;
 }
 
+
 /* ═══════════════════════════════════════════════════════════
-   6. CAS 번호 자동 하이픈 포맷
-   ─────────────────────────────────────────────────────────
-   입력 중 숫자를 자동으로 "XXXXXXX-XX-X" 형식으로 변환합니다.
-   onCASInput(el): input[oninput] 핸들러
+   7. CAS 번호 자동 하이픈 포맷
    ═══════════════════════════════════════════════════════════ */
 function formatCAS(val) {
   const digits = val.replace(/\D/g, '');
@@ -836,28 +688,32 @@ function onCASInput(el) {
 
 
 /* ═══════════════════════════════════════════════════════════
-   7. 분석 실행
+   8. 분석 실행
    ─────────────────────────────────────────────────────────
-   doManual():
-     1) 모든 MSDS 시트에서 입력값 수집
-     2) POST /api/manual/analyze 호출
-     3) 응답 → renderAll()
-   buildRawText(): 함량 범위 표시 텍스트 생성
+   /api/kreach, /api/kosha를 성분별로 직접(same-origin) 병렬 호출한다.
+   6개씩 청크로 나눠 과도한 동시 요청을 피한다.
    ═══════════════════════════════════════════════════════════ */
-function buildRawText(min, max, isLt) {
-  if (min != null && max != null) return min + '~' + max + '%' + (isLt ? ' 미만' : '');
-  if (max != null) return max + '%' + (isLt ? ' 미만' : '');
-  if (min != null) return min + '%';
-  return '';
+async function fetchKreach(cas, contentMax, isLt) {
+  const params = new URLSearchParams({ cas });
+  if (contentMax != null) params.set('contentMax', String(contentMax));
+  params.set('isLt', isLt ? 'true' : 'false');
+  const r = await fetch('/api/kreach?' + params.toString(), { signal: AbortSignal.timeout(20000) });
+  return r.json();
+}
+
+async function fetchKosha(cas) {
+  const params = new URLSearchParams({ cas });
+  const r = await fetch('/api/kosha?' + params.toString(), { signal: AbortSignal.timeout(20000) });
+  return r.json();
 }
 
 async function doManual() {
   const sheets = [...document.getElementById('msdsSheets').children];
   if (!sheets.length) { alert('MSDS를 1개 이상 추가하세요.'); return; }
 
-  /* 입력값 수집 */
   const payload = [];
   const dedupeMap = new Map();
+
   for (const sheet of sheets) {
     const sid      = sheet.id.replace('sheet-', '');
     const nameEl   = sheet.querySelector('.msds-sheet-head input');
@@ -875,31 +731,13 @@ async function doManual() {
       const minV   = minRaw !== '' ? parseFloat(minRaw) : null;
       const maxV   = maxRaw !== '' ? parseFloat(maxRaw) : null;
       const isLt   = document.getElementById('lt-' + id)?.checked || false;
-      recordCas(cas);   // 히스토리 기록
-      const compObj = {
-        cas_no:       cas,
-        ke_no:        '',
-        함량원문:     buildRawText(minV, maxV, isLt),
-        함량최소:     minV,
-        함량최대:     maxV,
-        최대포함여부: !isLt,
-        최소포함여부: true,
-      };
+      recordCas(cas);
 
+      const dedupeKey = [filename, cas, minV ?? '', maxV ?? '', isLt ? 'lt' : 'incl'].join('|');
+      if (dedupeMap.has(dedupeKey)) continue;
+      dedupeMap.set(dedupeKey, true);
 
-// 시트 내 중복 제거 키
-const dedupeKey = [
-  filename,
-  cas,
-  minV ?? '',
-  maxV ?? '',
-  !isLt ? 'incl' : 'lt'
-].join('|');
-
-if (!dedupeMap.has(dedupeKey)) {
-  dedupeMap.set(dedupeKey, true);
-  comps.push(compObj);
-}
+      comps.push({ cas, min: minV, max: maxV, isLt, kr: null, ko: null, verdict: null });
     }
     if (comps.length) payload.push({ filename, comps });
   }
@@ -908,223 +746,254 @@ if (!dedupeMap.has(dedupeKey)) {
 
   const totalComps = payload.reduce((s, r) => s + r.comps.length, 0);
 
-  /* UI: 버튼 비활성 + 진행 바 */
   document.getElementById('runBtnM').disabled = true;
   const pw = document.getElementById('progWrapM');
   const pf = document.getElementById('progFillM');
   const pl = document.getElementById('progLabelM');
   pw.style.display = 'block';
+  pf.style.width = '0%';
 
-  let pct = 0;
-  const tmr = setInterval(() => {
-    if (pct < 88) { pct += 3; pf.style.width = pct + '%'; }
-    pl.textContent = `K-REACH · KOSHA 조회 중... (${payload.length}개 MSDS / ${totalComps}종)`;
-  }, 400);
-
-  try {
-    const r = await fetch(PROXY + '/api/manual/analyze', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ sheets: payload }),
-      signal:  AbortSignal.timeout(180000),
+  const tasks = [];
+  payload.forEach((sheet) => {
+    sheet.comps.forEach((comp) => {
+      tasks.push({ comp, type: 'kr' });
+      tasks.push({ comp, type: 'ko' });
     });
-    const text = await r.text();
-    let d;
-    try   { d = JSON.parse(text); }
-    catch (e) {
-      clearInterval(tmr); pw.style.display = 'none';
-      showError('서버 응답 파싱 실패: ' + text.slice(0, 300));
-      document.getElementById('runBtnM').disabled = false;
-      return;
-    }
-    clearInterval(tmr);
-    pf.style.width = '100%';
-    pl.textContent = '완료!';
-    setTimeout(() => { pw.style.display = 'none'; pf.style.width = '0%'; }, 600);
+  });
 
-    if (!r.ok || d.error) showError(d.error || `HTTP ${r.status}`);
-    else { renderAll(d); refreshAllHistoryBars(); }
+  let done = 0;
+  const total = tasks.length;
+  const updateProgress = () => {
+    const pct = total ? Math.min(96, Math.round((done / total) * 96)) : 0;
+    pf.style.width = pct + '%';
+    pl.textContent = `K-REACH · KOSHA 조회 중... (${payload.length}개 MSDS / ${totalComps}종, ${done}/${total})`;
+  };
+  updateProgress();
 
-  } catch (e) {
-    clearInterval(tmr);
-    pw.style.display = 'none';
-    showError(e.message.includes('timeout') ? '응답 시간 초과 (180초)' : e.message);
+  const CHUNK = 6;
+  for (let i = 0; i < tasks.length; i += CHUNK) {
+    const chunk = tasks.slice(i, i + CHUNK);
+    await Promise.all(chunk.map(async (task) => {
+      try {
+        if (task.type === 'kr') {
+          task.comp.kr = await fetchKreach(task.comp.cas, task.comp.max, task.comp.isLt);
+        } else {
+          task.comp.ko = await fetchKosha(task.comp.cas);
+        }
+      } catch (e) {
+        const errObj = {
+          success: false,
+          retryable: true,
+          errorCode: 'CLIENT_FETCH_FAILED',
+          message: e && e.message ? e.message : '조회 중 오류가 발생했습니다.',
+        };
+        if (task.type === 'kr') task.comp.kr = errObj; else task.comp.ko = errObj;
+      }
+      done++;
+      updateProgress();
+    }));
   }
+
+  pf.style.width = '100%';
+  pl.textContent = '완료!';
+  setTimeout(() => { pw.style.display = 'none'; pf.style.width = '0%'; }, 600);
+
+  payload.forEach((sheet) => {
+    sheet.comps.forEach((comp) => {
+      comp.verdict = decidePurchase(comp, permittedSet, permittedUnavailable);
+    });
+  });
+
+  lastResultData = payload;
+  renderAll(payload);
+  refreshAllHistoryBars();
   document.getElementById('runBtnM').disabled = false;
 }
 
 
 /* ═══════════════════════════════════════════════════════════
-   8. 결과 렌더링 헬퍼
+   9. 4단계 구매 판정
    ─────────────────────────────────────────────────────────
-   각 함수는 테이블 <td> HTML 문자열을 반환합니다.
+   우선순위: 구매불가 > 검토 필요 > 구매가능(사내허가) > 구매가능
+   verdict: 'BLOCK' | 'REVIEW' | 'PERMITTED' | 'OK'
    ═══════════════════════════════════════════════════════════ */
+function decidePurchase(comp, permSet, permUnavailable) {
+  const kr = comp.kr;
+  const ko = comp.ko;
 
-/* K-REACH 규제함량 셀
-   - 금지물질: '완전금지' (함량 무관)
-   - 기타: 최대함량이 기준 이상일 때만 기준값 표시 */
-function buildKrConc(kr, cMax, maxIncluded) {
-  if (!kr || (kr.not_found && kr['금지'] !== 'Y')) return `<td style="text-align:center;padding:4px 6px" title="K-REACH 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
-  if (kr.error) {
-    const is429 = (kr.error || '').includes('429');
-    const label = is429 ? '일시오류' : '오류';
-    const tip   = is429 ? 'K-REACH API 호출 한도 초과 (잠시 후 재시도)' : kr.error.slice(0, 120);
-    return `<td style="text-align:center;padding:4px 6px" title="${escAttr(tip)}"><div style="font-size:11px;font-weight:700;color:var(--orange)">${label}</div></td>`;
+  // 조회 자체가 실패한 경우 — 판정 불가
+  if (!kr || kr.success !== true || !ko || ko.success !== true) {
+    return { verdict: 'REVIEW', reason: '규제 조회 실패 — 재분석이 필요합니다.', appliedUniqueNos: [] };
   }
 
-  if (kr['금지'] === 'Y') {
-    return `<td style="background:#1a1a2e;color:#fbbf24;font-weight:700;font-size:11px;text-align:center"
-              title="${escAttr(kr['금지_근거'] || '금지물질')}">완전금지</td>`;
+  // 1. 금지 — 사내 허가목록보다 절대 우선
+  if (kr.prohibited || ko.prohibited) {
+    const reasons = [];
+    if (kr.prohibited) reasons.push('K-REACH 금지물질');
+    if (ko.prohibited) reasons.push('KOSHA 제조 등의 금지물질');
+    return { verdict: 'BLOCK', reason: reasons.join(' / '), appliedUniqueNos: [] };
   }
 
-  const regs = [];
-  (kr['유해_기준표'] || []).forEach(r => {
-    if (r['기준값'] != null) regs.push({ name: r['카테고리'], thr: r['기준값'] });
-  });
-  if (kr['사고대비'] === 'Y') {
-    const m = (kr['사고대비_기준'] || '').match(/(\d+(?:\.\d+)?)/);
-    if (m) regs.push({ name: '사고대비', thr: parseFloat(m[1]) });
-  }
-  ['유독', '허가', '제한'].forEach(c => { if (kr[c] === 'Y') regs.push({ name: c, thr: null }); });
+  const krMatched = (kr.regulations || []).filter((r) => r.matchedByContent);
+  const koMatched = ko.regulations || []; // KOSHA는 매칭된 항목만 담겨 있음
 
-  if (!regs.length) return `<td class="cd">—</td>`;
-
-  const thrs   = regs.filter(r => r.thr != null).map(r => r.thr);
-  const minThr = thrs.length ? Math.min(...thrs) : null;
-
-  if (minThr != null && cMax != null) {
-    const exceeded = maxIncluded ? cMax >= minThr : cMax > minThr;
-    if (!exceeded) {
-      const sign = maxIncluded ? `${cMax}% ≤` : `${cMax}% 미만`;
-      return `<td class="cd" title="${sign} < 규제기준 ${minThr}%">—</td>`;
-    }
+  // 2. 규제 비해당(기존화학물질 KE번호만 있는 경우 포함 — regulations에 안 들어감)
+  if (!krMatched.length && !koMatched.length) {
+    return { verdict: 'OK', reason: '', appliedUniqueNos: [] };
   }
 
-  const concText = minThr != null ? `${minThr}% 이상` : '해당';
-  const tip      = regs.map(r => r.name + (r.thr != null ? ` ≥${r.thr}%` : '')).join(' / ');
-  const excp     = (kr['유해물질_예외조건'] || '').trim();
-
-  return `<td style="text-align:center;padding:4px 6px"
-            title="${escAttr(tip + (excp ? ' / 예외: ' + excp : ''))}">
-    <div style="font-size:12px;font-weight:700;color:var(--red)">${concText}</div>
-    ${excp ? `<div style="font-size:10px;color:var(--orange);line-height:1.3;margin-top:2px">※ ${escHtml(excp)}</div>` : ''}
-  </td>`;
-}
-
-/* K-REACH 유해성여부 셀 */
-function buildKrHazard(kr) {
-  if (!kr || (kr.not_found && kr['금지'] !== 'Y')) return `<td style="text-align:center;padding:4px 6px" title="K-REACH 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
-  if (kr.error) {
-    const is429 = (kr.error || '').includes('429');
-    const label = is429 ? '일시오류' : '오류';
-    const tip   = is429 ? 'K-REACH API 호출 한도 초과 (잠시 후 재시도)' : kr.error.slice(0, 120);
-    return `<td style="text-align:center;padding:4px 6px" title="${escAttr(tip)}"><div style="font-size:11px;font-weight:700;color:var(--orange)">${label}</div></td>`;
+  // KOSHA 규제는 사내 허가목록(CAS+K-REACH 고유번호 기준)으로 해소할 수 없음
+  if (koMatched.length) {
+    return {
+      verdict: 'REVIEW',
+      reason: 'KOSHA 규제대상(사내 허가목록으로 해소 불가) — ' + koMatched.map((r) => r.type).join(', '),
+      appliedUniqueNos: [],
+    };
   }
 
-  const lines = [];
-  // 1. 일반 규제 분류 태그 (주황색: 유독, 허가, 제한, 중점)
-  ['유독', '허가', '제한', '중점'].forEach(c => { 
-    if (kr[c] === 'Y') lines.push(`<span class="tag-org">${c}</span>`); 
-  });
+  // 3. K-REACH 규제대상 → 적용 고유번호(중복 제거) 추출
+  const uniqueNos = Array.from(new Set(krMatched.map((r) => r.uniqueNo).filter(Boolean)));
 
-  // 2. 인체·환경 유해성 및 사고대비 기준 태그 (노란색: tag-yel)
-  // 사고대비물질 정보를 포함하여 모든 기준치 항목을 여기서 출력합니다.
-  (kr['유해_기준표'] || []).forEach(r => {
-    if (r['기준값'] != null) {
-      lines.push(`<span class="tag-yel">${escHtml(r['카테고리'])} ≥${r['기준값']}%</span>`);
-    }
-  });
-
-  // 만약 유해_기준표에 없더라도 사고대비 'Y'인 경우 예외 처리 (보조용)
-  if (kr['사고대비'] === 'Y' && !lines.some(l => l.includes('사고대비'))) {
-    const b = kr['사고대비_기준'] ? ` ≥${kr['사고대비_기준']}%` : '';
-    lines.push(`<span class="tag-yel">사고대비${b}</span>`);
+  if (permUnavailable) {
+    return {
+      verdict: 'REVIEW',
+      reason: '사내 허가목록을 확인할 수 없어 판정할 수 없습니다.',
+      appliedUniqueNos: uniqueNos,
+    };
   }
 
-  const isHazardous = lines.length > 0;
-  if (!isHazardous && kr['기존화학_ke']) {
-    lines.push(`<span class="tag-gray">기존 ${escHtml(kr['기존화학_ke'])}</span>`);
+  if (!uniqueNos.length) {
+    return {
+      verdict: 'REVIEW',
+      reason: '유해화학물질 고유번호를 확인하지 못했습니다.',
+      appliedUniqueNos: uniqueNos,
+    };
   }
 
-  if (!lines.length) return `<td class="cd">—</td>`;
-  return `<td style="padding:4px 6px;text-align:left"><div style="line-height:1.8">${lines.join(' ')}</div></td>`;
-}
+  const cas = normalizeCas(comp.cas);
+  const allMatched = uniqueNos.every((unq) => permSet.has(compositeKey(cas, unq)));
 
-/* K-REACH 고시일자 셀 */
-function buildKrDate(kr) {
-  if (!kr || kr.not_found || kr.error) return `<td class="cd">—</td>`;
-  const d    = kr['고시일자'] || '';
-  const isHz = kr['유해판정'] === 'Y' || ['금지','유독','허가','제한','사고대비'].some(c => kr[c] === 'Y');
-  if (!isHz || !d) return `<td class="cd">—</td>`;
-  return `<td style="text-align:center;font-size:11px;color:#374151">${d}</td>`;
-}
+  if (allMatched) {
+    return { verdict: 'PERMITTED', reason: '사내 허가된 유해화학물질', appliedUniqueNos: uniqueNos };
+  }
 
-/* K-REACH 고유번호 셀 */
-function buildKrUnqNo(kr) {
-  if (!kr || kr.not_found || kr.error) return `<td class="cd">—</td>`;
-  const unq = (kr['유해물질_고유번호'] || '').trim();
-  if (!unq) return `<td class="cd">—</td>`;
-  return `<td style="text-align:center;font-size:11px;color:#374151;white-space:nowrap">${escHtml(unq)}</td>`;
-}
-
-/* KOSHA 규제함량 셀 */
-function buildKoConc(ko) {
-  if (!ko || ko.not_found) return `<td style="text-align:center;padding:4px 6px" title="KOSHA 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
-  if (ko.error) return `<td class="cd" title="${escAttr(ko.error)}">미응답</td>`;
-  const isReg = ko['금지'] === 'Y' || ko['특별관리'] === 'Y';
-  if (!isReg) return `<td class="cd">—</td>`;
-  return `<td style="text-align:center;font-size:12px;font-weight:700;color:var(--red)">해당</td>`;
-}
-
-/* KOSHA 유해성여부 셀 */
-function buildKoHazard(ko) {
-  if (!ko || ko.not_found) return `<td style="text-align:center;padding:4px 6px" title="KOSHA 미등록 — 신규물질 가능성"><div style="font-size:12px;font-weight:700;color:var(--red)">신규</div></td>`;
-  if (ko.error) return `<td class="cd" title="${escAttr(ko.error)}">미응답</td>`;
-  const lines = [];
-  if (ko['금지'] === 'Y')    lines.push(`<span class="tag-red">금지물질</span>`);
-  if (ko['특별관리'] === 'Y') lines.push(`<span class="tag-yel">특별관리</span>`);
-  if (!lines.length) return `<td class="cd">—</td>`;
-  return `<td style="padding:4px 6px;text-align:left"><div style="line-height:1.8">${lines.join(' ')}</div></td>`;
+  return {
+    verdict: 'REVIEW',
+    reason: '사내 허가목록과 일부 또는 전부 불일치',
+    appliedUniqueNos: uniqueNos,
+  };
 }
 
 
 /* ═══════════════════════════════════════════════════════════
-   renderAll — 서버 응답 전체를 결과 영역에 렌더링
-   ─────────────────────────────────────────────────────────
-   서버 응답 구조:
-   {ok, count, results: [{filename, section2, section3}, ...]}
+   10. 결과 렌더링
    ═══════════════════════════════════════════════════════════ */
-function renderAll(d) {
-  lastResultData = d;   // 텍스트 복사용 데이터 저장
-  const ra          = document.getElementById('resultArea');
-  const fileResults = d.results || [{ filename: d.filename || '', section2: d.section2 || {}, section3: d.section3 || [] }];
+function verdictMeta(verdict) {
+  switch (verdict) {
+    case 'BLOCK':     return { icon: '⛔', label: '구매불가', cls: 'verdict-block' };
+    case 'REVIEW':    return { icon: '⚠',  label: '검토 필요', cls: 'verdict-review' };
+    case 'PERMITTED': return { icon: '✅', label: '구매가능', sub: '사내 허가된 유해화학물질', cls: 'verdict-permitted' };
+    default:          return { icon: '✅', label: '구매가능', cls: 'verdict-ok' };
+  }
+}
+
+function buildVerdictCell(v) {
+  const meta = verdictMeta(v.verdict);
+  const subText = meta.sub || (v.verdict !== 'OK' ? v.reason : '');
+  const sub = subText ? `<div class="verdict-sub">${escHtml(subText)}</div>` : '';
+  return `<td class="td-verdict"><span class="verdict-badge ${meta.cls}">${meta.icon} ${meta.label}</span>${sub}</td>`;
+}
+
+function buildKrCell(kr) {
+  if (!kr || kr.success !== true) {
+    const msg = (kr && kr.message) || '조회 실패';
+    return `<td class="td-law" title="${escAttr(msg)}"><span class="tag-org">조회 실패</span><div class="law-note">재분석이 필요합니다</div></td>`;
+  }
+
+  const lines = [];
+  if (kr.notFound) lines.push(`<span class="tag-new">신규(K-REACH 미등록)</span>`);
+  if (kr.prohibited) {
+    lines.push(`<div class="law-prohib">⛔ 금지물질${kr.prohibitedReason ? ' — ' + escHtml(kr.prohibitedReason) : ''}</div>`);
+  }
+  (kr.regulations || []).filter((r) => r.matchedByContent).forEach((r) => {
+    const parts = [r.type];
+    if (r.hazardCategory) parts.push(r.hazardCategory);
+    if (r.criterion) parts.push(r.criterion);
+    let line = parts.join(' ');
+    if (r.uniqueNo) line += ` (${r.uniqueNo})`;
+    lines.push(`<div class="law-line">${escHtml(line)}</div>`);
+  });
+  if (kr.existingChemical && kr.existingChemical.matched) {
+    lines.push(`<span class="tag-gray">기존화학물질 (${escHtml(kr.existingChemical.keNo)})</span>`);
+  }
+  (kr.infoTags || []).forEach((t) => lines.push(`<span class="tag-gray">${escHtml(t.type)}</span>`));
+
+  if (!lines.length) return `<td class="td-law">규제기준 비해당</td>`;
+  return `<td class="td-law">${lines.join('')}</td>`;
+}
+
+function buildKoCell(ko) {
+  if (!ko || ko.success !== true) {
+    const msg = (ko && ko.message) || '조회 실패';
+    return `<td class="td-law" title="${escAttr(msg)}"><span class="tag-org">조회 실패</span><div class="law-note">재분석이 필요합니다</div></td>`;
+  }
+
+  const lines = [];
+  if (ko.notFound) lines.push(`<span class="tag-new">신규(KOSHA 미등록)</span>`);
+  (ko.regulations || []).forEach((r) => {
+    const isProhibit = r.type === '제조 등의 금지물질';
+    lines.push(`<div class="${isProhibit ? 'law-prohib' : 'law-line'}">${isProhibit ? '⛔ ' : ''}${escHtml(r.type)}</div>`);
+  });
+
+  if (!lines.length) return `<td class="td-law">규제기준 비해당</td>`;
+  return `<td class="td-law">${lines.join('')}</td>`;
+}
+
+function renderAll(payload) {
+  lastResultData = payload;
+  const ra = document.getElementById('resultArea');
   let html = '';
 
-  fileResults.forEach((fd, fi) => {
-    const fname  = fd.filename || `파일 ${fi + 1}`;
-    const s3     = fd.section3 || [];
-    const hasErr = !!fd.error;
+  payload.forEach((sheet, fi) => {
+    const fname = sheet.filename || `MSDS ${fi + 1}`;
+    const comps = sheet.comps || [];
 
-    /* 파일 제목 구분선 (복수 파일일 때) */
-    if (fileResults.length > 1) {
-      html += `<div style="margin:${fi > 0 ? '20px' : 0} 0 10px;padding:8px 14px;
-                background:var(--pri-dark);color:#fff;border-radius:var(--r);
-                font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px">
-        📋 ${fi + 1}. ${escHtml(fname)}
-        <span style="margin-left:auto;font-size:11px;font-weight:400;opacity:.8">${s3.length}종</span>
-      </div>`;
+    const counts = { OK: 0, PERMITTED: 0, REVIEW: 0, BLOCK: 0 };
+    comps.forEach((c) => { counts[c.verdict.verdict] = (counts[c.verdict.verdict] || 0) + 1; });
+
+    let overall = 'OK';
+    if (counts.BLOCK) overall = 'BLOCK';
+    else if (counts.REVIEW) overall = 'REVIEW';
+    else if (counts.PERMITTED) overall = 'PERMITTED';
+
+    const overallMeta = verdictMeta(overall);
+    let bannerTitle;
+    let bannerDetail;
+    if (overall === 'BLOCK') {
+      bannerTitle = '제품 구매불가';
+      bannerDetail = `금지물질 성분 ${counts.BLOCK}종 포함`;
+    } else if (overall === 'REVIEW') {
+      bannerTitle = '제품 구매 전 검토 필요';
+      bannerDetail = `전체 ${comps.length}종 / 사내 허가물질 ${counts.PERMITTED}종 / 검토필요 ${counts.REVIEW}종`;
+    } else if (overall === 'PERMITTED') {
+      bannerTitle = '제품 구매가능';
+      bannerDetail = `사내 허가된 유해화학물질 ${counts.PERMITTED}종 포함`;
+    } else {
+      bannerTitle = '제품 구매가능';
+      bannerDetail = `전체 ${comps.length}개 성분 중 규제 검토 대상 없음`;
     }
 
-    if (hasErr) {
-      html += `<div class="err-box"><strong>⚠️ ${escHtml(fname)} — 오류</strong>${escHtml(fd.error)}</div>`;
-      return;
-    }
-
-    /* 통합 규제 테이블 */
-    html += `<div class="card" style="margin-bottom:${fi < fileResults.length - 1 ? '6px' : '14px'}">
-      <div class="card-head">📦 구성성분 + 규제정보
-        ${fileResults.length === 1 ? '— ' + escHtml(fname) : ''}
-        <span class="sec-badge b-gray" style="margin-left:auto">${s3.length}종</span>
+    html += `<div class="card" style="margin-bottom:${fi < payload.length - 1 ? '6px' : '14px'}">
+      <div class="card-head">📦 구성성분 + 규제정보 — ${escHtml(fname)}
+        <span class="sec-badge b-gray" style="margin-left:auto">${comps.length}종</span>
+      </div>
+      <div class="summary-banner ${overallMeta.cls}">
+        <span class="summary-icon">${overallMeta.icon}</span>
+        <div class="summary-text">
+          <div class="summary-title">${escHtml(bannerTitle)}</div>
+          <div class="summary-detail">${escHtml(bannerDetail)}</div>
+        </div>
+        <button class="loc-btn" id="locBtn-${fi}" onclick="generateLoc(${fi})">📄 LOC 확인서(Word) 다운로드</button>
       </div>
       <div class="card-body" style="padding-top:8px">
       <div class="tbl-wrap"><table class="reg">
@@ -1133,76 +1002,61 @@ function renderAll(d) {
             <th class="th-info" rowspan="2" style="width:30px;text-align:center">#</th>
             <th class="th-info" rowspan="2" style="min-width:130px">화학물질명</th>
             <th class="th-info" rowspan="2">CAS No</th>
-            <th class="th-inp"  rowspan="2">최소(%)</th>
-            <th class="th-inp"  rowspan="2">최대(%)</th>
-            <th class="th-inp"  rowspan="2" title="이하=포함(≤) / 미만=미포함(<)">이하/미만</th>
-            <th class="th-kr"   colspan="4">화평법 (K-REACH)</th>
-            <th class="th-ko"   colspan="2">산안법 (KOSHA)</th>
+            <th class="th-inp" colspan="2">성분함량</th>
+            <th class="th-info" rowspan="2">판정</th>
+            <th class="th-kr">화평법 (K-REACH)</th>
+            <th class="th-ko">산안법 (KOSHA)</th>
           </tr>
           <tr>
-            <th class="th-kr" title="유해화학물질 최저 기준함량 / 예외조건">규제함량</th>
-            <th class="th-kr" title="유해성 분류 / 기존화학물질 KE번호">유해성 여부</th>
-            <th class="th-kr" title="유해화학물질 고시지정일자">고시일자</th>
-            <th class="th-kr" title="유해화학물질 고유번호">고유번호</th>
-            <th class="th-ko" title="산안법 규제 해당 여부">규제함량</th>
-            <th class="th-ko" title="금지물질 / 특별관리대상물질">유해성 여부</th>
+            <th class="th-inp">최소(%)</th>
+            <th class="th-inp">최대(%)</th>
+            <th class="th-kr">유해성·규제정보</th>
+            <th class="th-ko">유해성·규제정보</th>
           </tr>
         </thead>
         <tbody>`;
 
-    if (!s3.length) {
-      html += `<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">
+    if (!comps.length) {
+      html += `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">
         구성성분 정보가 없습니다.</td></tr>`;
     }
 
-    s3.forEach((comp, ci) => {
-      const cas          = comp['cas_no'] || '—';
-      const cMin         = comp['함량최소'];
-      const cMax         = comp['함량최대'];
-      const maxIncluded  = comp['최대포함여부'] !== undefined ? !!comp['최대포함여부'] : !comp['미만여부'];
-      const minIncluded  = comp['최소포함여부'] !== undefined ? !!comp['최소포함여부'] : !comp['초과여부'];
-      const kr           = comp.kreach || {};
-      const ko           = comp.kosha  || {};
-
-      /* 화학물질명 셀 */
-      const nmKor = (kr['화학물질명_국문'] || '').trim().replace(/^—$/, '');
-      const nmEng = (kr['화학물질명_영문'] || '').trim().replace(/^—$/, '');
+    comps.forEach((comp, ci) => {
+      const kr = comp.kr || {};
+      const nmKor = (kr.chemicalNameKor || '').trim();
+      const nmEng = (kr.chemicalNameEn || '').trim();
       let nmCell;
       if (nmKor)
         nmCell = `<td class="td-nm">${escHtml(nmKor)}${nmEng ? `<br><span style="font-size:10px;color:var(--muted);font-weight:400">(${escHtml(nmEng)})</span>` : ''}</td>`;
       else if (nmEng)
         nmCell = `<td class="td-nm">${escHtml(nmEng)}</td>`;
       else
-        nmCell = `<td class="td-nm" style="color:var(--muted);font-style:italic;font-size:11px">미조회<br><span style="font-size:9px">${escHtml(cas)}</span></td>`;
+        nmCell = `<td class="td-nm" style="color:var(--muted);font-style:italic;font-size:11px">미조회<br><span style="font-size:9px">${escHtml(comp.cas)}</span></td>`;
 
-      const minTd = cMin != null ? `<td class="td-num">${cMin}%</td>` : `<td class="cd">—</td>`;
-      const maxTd = cMax != null ? `<td class="td-num">${cMax}%</td>` : `<td class="cd">—</td>`;
-
-      /* 이하/미만 플래그 셀 */
-      let flagTd;
-      if (cMax != null && !maxIncluded)
-        flagTd = `<td style="text-align:center;font-size:12px;color:var(--orange);font-weight:700" title="${cMax}% 미포함 (미만 < ${cMax}%)">미만</td>`;
-      else if (cMin != null && !minIncluded)
-        flagTd = `<td style="text-align:center;font-size:12px;color:var(--orange);font-weight:700" title="${cMin}% 미포함 (초과 > ${cMin}%)">초과</td>`;
-      else if (cMax != null)
-        flagTd = `<td style="text-align:center;font-size:11px;color:#374151" title="${cMax}% 포함 (이하 ≤ ${cMax}%)">이하</td>`;
-      else
-        flagTd = `<td class="cd">—</td>`;
+      const minTd = comp.min != null ? `<td class="td-num">${comp.min}%</td>` : `<td class="cd">—</td>`;
+      let maxTd;
+      if (comp.max != null) {
+        const sign = comp.isLt ? '<' : '≤';
+        const title = comp.isLt ? `${comp.max}% 미포함(미만)` : `${comp.max}% 포함(이하)`;
+        maxTd = `<td class="td-num" title="${title}">${sign}${comp.max}%</td>`;
+      } else {
+        maxTd = `<td class="cd">—</td>`;
+      }
 
       html += `<tr class="${ci > 0 ? 'row-sep' : ''}">
         <td style="text-align:center;font-size:12px;font-weight:700;color:var(--muted)">${ci + 1}</td>
         ${nmCell}
-        <td class="td-cas">${escHtml(cas)}</td>
-        ${minTd}${maxTd}${flagTd}
-        ${buildKrConc(kr, cMax, maxIncluded)}${buildKrHazard(kr)}${buildKrDate(kr)}${buildKrUnqNo(kr)}
-        ${buildKoConc(ko)}${buildKoHazard(ko)}
+        <td class="td-cas">${escHtml(comp.cas)}</td>
+        ${minTd}${maxTd}
+        ${buildVerdictCell(comp.verdict)}
+        ${buildKrCell(comp.kr)}
+        ${buildKoCell(comp.ko)}
       </tr>`;
     });
 
     html += `</tbody></table></div></div></div>`;
   });
 
-  /* 결과 복사 버튼 2종 + API 응답 원문 토글 */
   const uid = 'raw-' + Math.random().toString(36).slice(2, 6);
   html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;gap:8px;flex-wrap:wrap">
     <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -1213,9 +1067,9 @@ function renderAll(d) {
         ⚠️ 규제대상만 복사
       </button>
     </div>
-    <button class="raw-toggle" onclick="toggleEl('${uid}')">▼ API 응답 원문 보기</button>
+    <button class="raw-toggle" onclick="toggleEl('${uid}')">▼ 원본 데이터 보기</button>
   </div>
-  <div id="${uid}" class="raw-box">${escHtml(JSON.stringify(d, null, 2))}</div>`;
+  <div id="${uid}" class="raw-box">${escHtml(JSON.stringify(payload, null, 2))}</div>`;
 
   ra.innerHTML = html;
   ra.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1223,152 +1077,66 @@ function renderAll(d) {
 
 
 /* ═══════════════════════════════════════════════════════════
-   9. 유틸리티
+   결과 복사 (전체 / 규제대상만)
    ═══════════════════════════════════════════════════════════ */
-/* ═══════════════════════════════════════════════════════════
-   기능1. 전체 결과 복사 / 규제대상만 복사
-   ─────────────────────────────────────────────────────────
-   copyResultsAsText(false) → 전체 결과
-   copyResultsAsText(true)  → 규제대상(함량초과·신규화학)만
-   ═══════════════════════════════════════════════════════════ */
-
-/* 규제대상 여부 판별 (수정 로직 반영) */
-function isRegulated(comp) {
-  const kr = comp.kreach || {};
-  const ko = comp.kosha  || {};
-
-  // 1. 신규물질: K-REACH 미등록 (피드백5)
-  if (!kr || (kr.not_found && kr['금지'] !== 'Y')) return true;
-  // KOSHA 미등록도 신규로 간주
-  if (!ko || ko.not_found) return true;
-
-  // 2. 함량 무관 규제 (Binary) — 해당만으로 규제
-  if (kr['금지'] === 'Y' || kr['유독'] === 'Y' || kr['허가'] === 'Y' || kr['제한'] === 'Y') return true;
-  if (ko['금지'] === 'Y' || ko['특별관리'] === 'Y') return true;
-
-  // 3. 기준치 규제 — 초과 시에만 규제 (피드백6: 미달은 제외)
-  const tbl = kr['유해_기준표'] || [];
-  if (tbl.some(r => r['초과'] === true)) return true;
-
-  return false;
-}
-
 function copyResultsAsText(regulatedOnly = false) {
   if (!lastResultData) return;
 
-  const fileResults = lastResultData.results ||
-    [{ filename: lastResultData.filename || '', section3: lastResultData.section3 || [] }];
+  const blocks = lastResultData.map((sheet) => {
+    const fname = (sheet.filename || '').trim() || 'MSDS';
+    const comps = regulatedOnly
+      ? (sheet.comps || []).filter((c) => c.verdict && c.verdict.verdict !== 'OK')
+      : (sheet.comps || []);
 
-  const blocks = [];
-
-  fileResults.forEach(fd => {
-    const fname = (fd.filename || '').trim() || 'MSDS';
-    const s3    = fd.section3 || [];
-    const comps = regulatedOnly ? s3.filter(isRegulated) : s3;
-
-    const lines = [];
-    lines.push(`제품명 : ${fname}`);
-    lines.push('');
+    const lines = [`제품명 : ${fname}`, ''];
 
     if (!comps.length) {
       lines.push(regulatedOnly ? '\t(규제대상 물질 없음)' : '\t(구성성분 없음)');
-      blocks.push(lines.join('\n'));
-      return;
+      return lines.join('\n');
     }
 
     comps.forEach((comp, ci) => {
-      const cas  = comp['cas_no'] || '—';
-      const cMin = comp['함량최소'];
-      const cMax = comp['함량최대'];
-      const isLt = comp['최대포함여부'] === false || comp['미만여부'] === true;
-      const kr   = comp.kreach || {};
-      const ko   = comp.kosha  || {};
+      const kr = comp.kr || {};
+      const ko = comp.ko || {};
+      const nmKor = (kr.chemicalNameKor || '').trim();
+      const nmEng = (kr.chemicalNameEn || '').trim();
+      const namePart = nmKor && nmEng ? `${nmKor} (${nmEng})` : (nmKor || nmEng || comp.cas);
 
-      /* 물질명 처리 */
-      const nmKor = (kr['화학물질명_국문'] || '').trim().replace(/^—$/, '')
-                 || (ko['chemNameKor']      || '').trim().replace(/^—$/, '');
-      const nmEng = (kr['화학물질명_영문'] || '').trim().replace(/^—$/, '');
-      let namePart = nmKor && nmEng ? `${nmKor} (${nmEng})` : (nmKor || (nmEng ? `(${nmEng})` : cas));
-
-      /* 함량 범위 처리 */
       let qtyPart = '함량 미상';
-      if (cMin != null && cMax != null) qtyPart = `${cMin}%~${cMax}%${isLt ? '미만' : ''}`;
-      else if (cMax != null) qtyPart = `${cMax}%${isLt ? '미만' : ''} 이하`;
-      else if (cMin != null) qtyPart = `${cMin}% 이상`;
+      if (comp.min != null && comp.max != null) qtyPart = `${comp.min}%~${comp.max}%${comp.isLt ? ' 미만' : ''}`;
+      else if (comp.max != null) qtyPart = `${comp.max}%${comp.isLt ? ' 미만' : ' 이하'}`;
+      else if (comp.min != null) qtyPart = `${comp.min}% 이상`;
 
-      /* 규제 결과 분석 */
+      const meta = verdictMeta(comp.verdict.verdict);
+      const verdictText = meta.sub ? `${meta.label}(${meta.sub})` : meta.label;
+
       const krParts = [];
-      const koParts = [];
-
-      // [K-REACH]
-      if (!kr || kr.not_found) {
-        krParts.push('신규화학물질');
-      } else if (!kr.error) {
-        const tbl = kr['유해_기준표'] || [];
-
-        if (kr['금지'] === 'Y') {
-          // 피드백2: 화평법 금지물질
-          krParts.push('화평법 금지물질');
-
-        } else if (kr['유독'] === 'Y') {
-          krParts.push('유해화학물질 (유독물질)');
-
-        } else if (kr['허가'] === 'Y') {
-          krParts.push('유해화학물질 (허가물질)');
-
-        } else if (kr['제한'] === 'Y') {
-          krParts.push('유해화학물질 (제한물질)');
-
-        } else if (kr['사고대비'] === 'Y') {
-          // 피드백1: 기준 초과 시에만 표시, 미달은 제외(피드백6)
-          const saRow = tbl.find(r => r['카테고리'] === '사고대비');
-          if (saRow && saRow['초과'] === true) {
-            krParts.push(`사고대비물질 규제기준 ${saRow['기준값']}% 이상 초과`);
-          }
-          // 미달이면 아무것도 추가하지 않음
-
-        } else {
-          // 인체등유해성물질: 기준표 초과 시에만 표시, 미달은 제외(피드백6)
-          const exceeded = tbl.filter(r => r['초과'] === true);
-          if (exceeded.length) {
-            const minThr = Math.min(...exceeded.map(r => r['기준값']));
-            krParts.push(`유해화학물질 규제기준 ${minThr}% 이상 초과`);
-          } else if (kr['기존화학_ke']) {
-            // 피드백3: 규제가 없고 기존화학만인 경우 → 병합로직에서 처리
-            krParts.push('__기존__');
-          }
-        }
-      }
-
-      // [KOSHA]
-      if (!ko || ko.not_found) {
-        if (!krParts.includes('신규화학물질')) koParts.push('신규화학물질(KOSHA)');
-      } else if (!ko.error) {
-        if (ko['금지'] === 'Y') koParts.push('산안법 금지물질');
-        if (ko['특별관리'] === 'Y') koParts.push('산안법 특별관리물질');
-      }
-
-      /* 병합 로직 */
-      const finalParts = [];
-      const koHasReg = koParts.some(p => p.startsWith('산안법'));
-
-      if (krParts.includes('화평법 금지물질') && koParts.includes('산안법 금지물질')) {
-        finalParts.push('화평법, 산안법 금지물질');
-        koParts.filter(p => p !== '산안법 금지물질').forEach(p => finalParts.push(p));
-        krParts.filter(p => p !== '화평법 금지물질').forEach(p => finalParts.push(p));
-      } else {
-        krParts.forEach(p => {
-          if (p === '__기존__') { if (!koHasReg) finalParts.push('기존화학물질'); }
-          else finalParts.push(p);
+      if (kr.success === false) krParts.push('K-REACH 조회 실패');
+      else if (kr.notFound) krParts.push('신규화학물질');
+      else {
+        if (kr.prohibited) krParts.push(`화평법 금지물질${kr.prohibitedReason ? '(' + kr.prohibitedReason + ')' : ''}`);
+        (kr.regulations || []).filter((r) => r.matchedByContent).forEach((r) => {
+          const p = [r.type, r.hazardCategory, r.criterion].filter(Boolean).join(' ');
+          krParts.push(r.uniqueNo ? `${p} (${r.uniqueNo})` : p);
         });
-        koParts.forEach(p => finalParts.push(p));
+        if (kr.existingChemical && kr.existingChemical.matched) {
+          krParts.push(`기존화학물질(${kr.existingChemical.keNo})`);
+        }
+        if (!krParts.length) krParts.push('규제기준 비해당');
       }
 
-      const bracket = finalParts.length ? ` [${finalParts.join(', ')}]` : '';
-      lines.push(`\t${ci + 1}. ${namePart} CAS NO. ${cas} 물질 ${qtyPart} 함유${bracket}`);
+      const koParts = [];
+      if (ko.success === false) koParts.push('KOSHA 조회 실패');
+      else if (ko.notFound) koParts.push('신규화학물질(KOSHA)');
+      else if (!(ko.regulations || []).length) koParts.push('규제기준 비해당');
+      else (ko.regulations || []).forEach((r) => koParts.push(r.type));
+
+      lines.push(`\t${ci + 1}. ${namePart} CAS NO. ${comp.cas} 물질 ${qtyPart} 함유 [판정: ${verdictText}]`);
+      lines.push(`\t   K-REACH: ${krParts.join(' / ')}`);
+      lines.push(`\t   KOSHA: ${koParts.join(' / ')}`);
     });
 
-    blocks.push(lines.join('\n'));
+    return lines.join('\n');
   });
 
   const text    = blocks.join('\n\n');
@@ -1390,7 +1158,6 @@ function copyResultsAsText(regulatedOnly = false) {
   }
 }
 
-
 function fallbackCopy(text, onDone) {
   const ta = document.createElement('textarea');
   ta.value = text;
@@ -1403,31 +1170,280 @@ function fallbackCopy(text, onDone) {
 }
 
 
+/* ═══════════════════════════════════════════════════════════
+   11. 사내 허가목록 관리 모달
+   ═══════════════════════════════════════════════════════════ */
+function openPermittedModal() {
+  const modal = document.getElementById('permittedModal');
+  if (modal) modal.style.display = 'flex';
+  renderPermittedTable();
+}
+
+function closePermittedModal() {
+  const modal = document.getElementById('permittedModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function renderPermittedTable() {
+  const body = document.getElementById('permittedTableBody');
+  if (!body) return;
+
+  const casQ = (document.getElementById('permittedSearchCas')?.value || '').trim().toLowerCase();
+  const unqQ = (document.getElementById('permittedSearchUnq')?.value || '').trim().toLowerCase();
+
+  const filtered = permittedItems.filter((it) =>
+    (!casQ || it.casNo.toLowerCase().includes(casQ)) &&
+    (!unqQ || it.uniqueNo.toLowerCase().includes(unqQ))
+  );
+
+  if (!filtered.length) {
+    body.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:16px">등록된 항목이 없습니다.</td></tr>`;
+  } else {
+    body.innerHTML = filtered.map((it) => `
+      <tr>
+        <td class="td-cas">${escHtml(it.casNo)}</td>
+        <td>${escHtml(it.uniqueNo)}</td>
+        <td style="text-align:center">
+          <button class="rm-btn" onclick="deletePermittedItem('${escAttr(it.casNo)}','${escAttr(it.uniqueNo)}')">✕</button>
+        </td>
+      </tr>`).join('');
+  }
+
+  const countEl = document.getElementById('permittedCount');
+  if (countEl) {
+    countEl.textContent = `등록 ${permittedItems.length}건` +
+      (filtered.length !== permittedItems.length ? ` (검색결과 ${filtered.length}건)` : '');
+  }
+}
+
+async function submitPermittedRequest(mode, items) {
+  const msgBox = document.getElementById('permittedMsgBox');
+  if (msgBox) msgBox.innerHTML = '⏳ 저장 중...';
+
+  try {
+    const r = await fetch('/api/permitted-chems', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, items }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const d = await r.json();
+
+    if (!d.success) {
+      if (msgBox) {
+        let msg = `<div class="err-box">저장 실패: ${escHtml(d.message || '')}</div>`;
+        if (d.errors && d.errors.length) {
+          msg += `<ul class="permitted-errors">` +
+            d.errors.map((e) => `<li>${e.row}행: ${escHtml(e.reason)}</li>`).join('') + `</ul>`;
+        }
+        msgBox.innerHTML = msg;
+      }
+      return;
+    }
+
+    permittedItems = d.items || [];
+    permittedSet = new Set(permittedItems.map((it) => compositeKey(it.casNo, it.uniqueNo)));
+    permittedUnavailable = false;
+
+    let msg = `✅ 저장 완료 (현재 ${permittedItems.length}건)`;
+    if (d.errors && d.errors.length) {
+      msg += `<div style="color:var(--orange);margin-top:6px">⚠️ 일부 행 저장 실패</div>` +
+        `<ul class="permitted-errors">` +
+        d.errors.map((e) => `<li>${e.row}행: ${escHtml(e.reason)}</li>`).join('') + `</ul>`;
+    }
+    if (msgBox) msgBox.innerHTML = msg;
+    renderPermittedTable();
+  } catch (e) {
+    if (msgBox) msgBox.innerHTML = `<div class="err-box">저장 실패: ${escHtml(e.message || '')}</div>`;
+  }
+}
+
+function addPermittedSingle() {
+  const casEl = document.getElementById('permittedNewCas');
+  const unqEl = document.getElementById('permittedNewUnq');
+  const cas = casEl?.value || '';
+  const unq = unqEl?.value || '';
+  if (!cas.trim() || !unq.trim()) { alert('CAS 번호와 유해화학물질 고유번호를 모두 입력하세요.'); return; }
+  submitPermittedRequest('append', [{ casNo: cas, uniqueNo: unq }]);
+  if (casEl) casEl.value = '';
+  if (unqEl) unqEl.value = '';
+}
+
+function parseBulkPermittedText(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean);
+  const items = [];
+  lines.forEach((line, idx) => {
+    if (idx === 0 && /cas/i.test(line) && /(고유번호|unique)/i.test(line)) return; // 헤더 줄 스킵
+    const parts = line.includes(',') ? line.split(',') : line.split(/\t|\s{2,}/);
+    if (parts.length < 2) return;
+    items.push({ casNo: parts[0], uniqueNo: parts[1] });
+  });
+  return items;
+}
+
+function submitPermittedBulk(mode) {
+  const textEl = document.getElementById('permittedBulkText');
+  const items = parseBulkPermittedText(textEl?.value || '');
+  if (!items.length) { alert('입력된 항목이 없습니다.'); return; }
+  if (mode === 'replace' && !confirm('전체 목록을 여기 입력한 내용으로 교체합니다. 계속할까요?')) return;
+  submitPermittedRequest(mode, items);
+}
+
+function handlePermittedCsvUpload(evt) {
+  const file = evt.target.files && evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const textEl = document.getElementById('permittedBulkText');
+    if (textEl) textEl.value = String(reader.result || '');
+  };
+  reader.readAsText(file, 'utf-8');
+  evt.target.value = '';
+}
+
+function deletePermittedItem(cas, unq) {
+  if (!confirm(`${cas} / ${unq} 항목을 삭제할까요?`)) return;
+  submitPermittedRequest('delete', [{ casNo: cas, uniqueNo: unq }]);
+}
+
+function downloadPermittedCsv() {
+  const rows = ['cas_no,unique_no', ...permittedItems.map((it) => `${it.casNo},${it.uniqueNo}`)];
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(blob, 'permitted_chems.csv');
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   12. LOC(Word) 확인서 자동 생성
+   ─────────────────────────────────────────────────────────
+   docxtemplater/PizZip을 CDN에서 로드해 브라우저에서 직접 생성한다
+   (index.html에 <script> 태그로 포함되어 있어야 함).
+   환경(K-REACH) 문서와 산안법(KOSHA) 문서 두 개를 순차 다운로드한다.
+
+   v_acc(사고대비물질) 플래그는 K-REACH 사고대비물질만 반영한다.
+   KOSHA 특별관리물질은 별개 법령(산업안전보건법)이므로 의도적으로
+   병합하지 않는다.
+   ═══════════════════════════════════════════════════════════ */
+function safeFileName(name) {
+  return String(name || 'MSDS').replace(/[\\/:*?"<>|]/g, '_').trim() || 'MSDS';
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+async function loadTemplateArrayBuffer(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error('템플릿 파일을 불러올 수 없습니다: ' + path);
+  return r.arrayBuffer();
+}
+
+function renderDocxFromTemplate(arrayBuffer, data) {
+  const zip = new window.PizZip(arrayBuffer);
+  const doc = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+  doc.render(data);
+  return doc.getZip().generate({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+}
+
+function buildLocComps(comps) {
+  return (comps || []).map((comp) => {
+    const kr = (comp.kr && comp.kr.success) ? comp.kr : {};
+    const ko = (comp.ko && comp.ko.success) ? comp.ko : {};
+    const name = (kr.chemicalNameKor || kr.chemicalNameEn || comp.cas || '').trim();
+
+    const isToxic = (kr.regulations || []).some((r) => r.type === '유독물질' && r.matchedByContent);
+    const hasHazardCat = (cat) => (kr.regulations || []).some((r) => r.hazardCategory === cat && r.matchedByContent);
+    const hasType = (type) => (kr.regulations || []).some((r) => r.type === type && r.matchedByContent);
+
+    return {
+      name,
+      cas: comp.cas || '',
+      min: comp.min != null ? String(comp.min) : '',
+      max: comp.max != null ? String(comp.max) : '',
+      p_n: kr.existingChemical && kr.existingChemical.matched ? 'P' : 'N',
+      v_acute:   (isToxic || hasHazardCat('급성')) ? 'V' : '',
+      v_chronic: (isToxic || hasHazardCat('만성')) ? 'V' : '',
+      v_env:     (isToxic || hasHazardCat('생태')) ? 'V' : '',
+      v_perm:    hasType('허가물질') ? 'V' : '',
+      v_rest:    hasType('제한물질') ? 'V' : '',
+      v_prohib:  (kr.prohibited || ko.prohibited) ? 'V' : '',
+      v_acc:     hasType('사고대비물질') ? 'V' : '', // KOSHA 특별관리물질은 의도적으로 미포함
+    };
+  });
+}
+
+async function generateLoc(sheetIndex) {
+  const sheet = lastResultData && lastResultData[sheetIndex];
+  if (!sheet) return;
+
+  const btn = document.getElementById('locBtn-' + sheetIndex);
+  const origTxt = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ LOC 생성 중...'; }
+
+  try {
+    if (!window.PizZip || !window.docxtemplater) {
+      throw new Error('LOC 생성 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.');
+    }
+
+    const productName = sheet.filename || 'MSDS';
+    const comps = buildLocComps(sheet.comps);
+    const fileBase = safeFileName(productName);
+
+    const envBuf = await loadTemplateArrayBuffer(encodeURI('/Letter_of_Confirmation(environment).docx'));
+    const envBlob = renderDocxFromTemplate(envBuf, { product_name: productName, comps });
+    downloadBlob(envBlob, `LOC_${fileBase}_environment.docx`);
+
+    await new Promise((r) => setTimeout(r, 400));
+
+    const healthBuf = await loadTemplateArrayBuffer(encodeURI('/Letter_of_Confirmation(health).docx'));
+    const healthBlob = renderDocxFromTemplate(healthBuf, { product_name: productName });
+    downloadBlob(healthBlob, `LOC_${fileBase}_health.docx`);
+  } catch (e) {
+    const detail = e && e.properties && e.properties.errors
+      ? e.properties.errors.map((x) => x.message || x.name).join(', ')
+      : (e && e.message) || String(e);
+    alert('LOC 생성 실패: ' + detail);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origTxt || '📄 LOC 확인서(Word) 다운로드'; }
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   13. 유틸리티
+   ═══════════════════════════════════════════════════════════ */
 function showError(msg) {
   document.getElementById('resultArea').innerHTML = `
     <div class="err-box">
       <strong>⚠️ 오류 발생</strong>
-      ${msg}<br><br>
-      확인: Flask 서버 실행 여부 · <code>localhost:5000</code> 접근 가능 여부
+      ${msg}
     </div>`;
 }
 
-/* 원문 토글 */
 function toggleEl(id) {
   const el = document.getElementById(id);
   el.style.display = el.style.display === 'block' ? 'none' : 'block';
 }
 
-/* HTML 이스케이프 */
 function escHtml(s) {
-  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return (s || '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 function escAttr(s) {
-  return (s || '').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  return (s || '').toString().replace(/"/g,'&quot;').replace(/</g,'&lt;');
 }
 
 /* ── 페이지 초기화 ──────────────────────────────────────── */
 window.addEventListener('load', function () {
-  checkServer();
-  addMsdsSheet('');   // 기본 시트 1개 생성
+  loadPermittedListAndStatus();
+  addMsdsSheet('');
 });
