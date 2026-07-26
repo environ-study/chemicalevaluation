@@ -18,7 +18,7 @@ const {
   normalizeUniqueNo,
   isKeNumber,
   compositeKey,
-} = require('../shared/normalize');
+} = require('./_lib/normalize');
 
 const LIST_KEY = 'permitted_chems:list';
 
