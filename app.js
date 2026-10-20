@@ -964,7 +964,51 @@ function combinedHazardSticker(hazardEntries) {
     ? thresholds.reduce((best, r) => r.thresholdValue < best.thresholdValue ? r : best)
     : null;
   const criterion = minimum && minimum.criterion ? `(${minimum.criterion})` : '';
-  return `인체등유해성${categoryText ? `·${categoryText}` : ''}${criterion}`;
+  // K-REACH API에 아직 반영되지 않아 지정고시 별표 기준으로 판정한 경우 표시
+  const noticeMark = hazardEntries.some(({ r }) => r.fromNotice) ? ' [고시 기준]' : '';
+  return `인체등유해성${categoryText ? `·${categoryText}` : ''}${criterion}${noticeMark}`;
+}
+
+/** 남은 유예기한 중 가장 가까운 것을 스티커로 표시한다. */
+function graceSticker(grace) {
+  const next = grace.items[0];
+  return `유예 ${next.article} ~${next.due}${grace.special ? ' (특례)' : ''}`;
+}
+
+function renderGraceModal(comp, kr) {
+  const modal = document.getElementById('krDetailModal');
+  const body = document.getElementById('krDetailBody');
+  const titleEl = document.getElementById('krDetailTitle');
+  if (!modal || !body) return;
+  const g = kr.grace;
+  if (titleEl) titleEl.textContent = '부칙 유예기한';
+
+  const rows = g.items.map((i) => `
+    <tr>
+      <td>${escHtml(i.article)}</td>
+      <td>${escHtml(i.task)}</td>
+      <td>${escHtml(i.due)} ${escHtml(i.dueRule)}</td>
+      <td>D-${i.daysLeft}</td>
+    </tr>`).join('');
+
+  body.innerHTML = `
+    <div class="kr-detail-meta">
+      <div><b>화학물질명</b> ${escHtml(kr.chemicalName || comp.cas)}</div>
+      <div><b>CAS 번호</b> ${escHtml(comp.cas)}</div>
+      <div><b>근거 고시</b> ${escHtml(g.noticeLabel)} · ${escHtml(g.changeKind)} (고유번호 ${escHtml(g.uniqueNo)})</div>
+      <div><b>시행일</b> ${escHtml(g.effective)}</div>
+      <div><b>대상</b> ${escHtml(g.holder)}</div>
+      ${g.prevMin != null ? `<div><b>적용 함량</b> 종전 기준 ${escHtml(String(g.prevMin))}% 미만으로 새로 규제 범위에 들어온 함량</div>` : ''}
+      ${g.special ? `<div><b>특례</b> ${escHtml(g.special.label)} — ${escHtml(g.special.note)}</div>` : ''}
+    </div>
+    <div class="kr-detail-block">
+      <table class="grace-table">
+        <thead><tr><th>조문</th><th>준수사항</th><th>기한</th><th>남은 기간</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="kr-detail-text grace-note">${escHtml(g.basis)} (기준일 ${escHtml(g.today)})</div>
+    </div>`;
+  modal.style.display = 'flex';
 }
 
 function hasDetailContent(sources) {
@@ -992,6 +1036,8 @@ function buildKrCell(kr, sheetIdx, compIdx) {
   }
 
   if (kr.notFound) tags.push(`<span class="kreach-tag tag-new">신규(K-REACH 미등록)</span>`);
+  // K-REACH에 등록돼 있어도 기존화학물질 번호(KE)가 없으면 신규화학물질 — 확인서 P/N 판정과 같은 기준
+  else if (!(kr.existingChemical && kr.existingChemical.matched)) tags.push(`<span class="kreach-tag tag-new">신규(KE 없음)</span>`);
 
   const matched = (kr.regulations || [])
     .map((r, idx) => ({ r, idx }))
@@ -1016,6 +1062,22 @@ function buildKrCell(kr, sheetIdx, compIdx) {
   otherEntries.forEach(({ r, idx }) => {
     tags.push(krTagButton(sheetIdx, compIdx, 'reg', idx, regSticker(r), krTagClass(r.type), r.sources));
   });
+
+  // 시행 전 고시로 함량기준에 해당하게 되는 경우(현재 판정에는 미반영)
+  const pendingEntries = (kr.regulations || []).map((r, idx) => ({ r, idx })).filter(({ r }) => r.matchedPending);
+  if (pendingEntries.length) {
+    const from = pendingEntries.map(({ r }) => r.pendingFrom).sort()[0];
+    tags.push(krTagButton(
+      sheetIdx, compIdx, 'hazardPending', null,
+      `${combinedHazardSticker(pendingEntries)} ${from} 시행 예정`,
+      'tag-pending',
+      pendingEntries.reduce((acc, { r }) => acc.concat(r.sources || []), []),
+    ));
+  }
+
+  if (kr.grace && kr.grace.items && kr.grace.items.length) {
+    tags.push(`<button type="button" class="kreach-tag tag-grace" onclick="openKrDetailPopup(${sheetIdx},${compIdx},'grace',null)">${escHtml(graceSticker(kr.grace))}</button>`);
+  }
 
   if (kr.existingChemical && kr.existingChemical.matched) {
     tags.push(krTagButton(sheetIdx, compIdx, 'existing', null, '기존', 'tag-gray', kr.existingChemical.sources));
@@ -1061,6 +1123,16 @@ function openKrDetailPopup(sheetIdx, compIdx, kind, key) {
       .filter(({ r }) => r.type === '인체등유해성물질' && r.matchedByContent);
     title = combinedHazardSticker(entries);
     sources = entries.reduce((acc, { r }) => acc.concat(r.sources || []), []);
+  } else if (kind === 'hazardPending') {
+    const entries = (kr.regulations || [])
+      .map((r, idx) => ({ r, idx }))
+      .filter(({ r }) => r.matchedPending);
+    title = `${combinedHazardSticker(entries)} 시행 예정`;
+    sources = entries.reduce((acc, { r }) => acc.concat(r.sources || []), []);
+  } else if (kind === 'grace') {
+    if (!kr.grace) return;
+    renderGraceModal(comp, kr);
+    return;
   } else if (kind === 'existing') {
     title = '기존';
     sources = (kr.existingChemical && kr.existingChemical.sources) || [];
@@ -1292,18 +1364,27 @@ function copyResultsAsText(regulatedOnly = false) {
 
       const krParts = [];
       if (kr.success === false) krParts.push('K-REACH 조회 실패');
-      else if (kr.notFound) krParts.push('신규화학물질');
       else {
+        const isExisting = kr.existingChemical && kr.existingChemical.matched;
+        if (kr.notFound || !isExisting) krParts.push('신규화학물질');
         if (kr.prohibited) krParts.push(`화평법 금지물질${kr.prohibitedReason ? '(' + kr.prohibitedReason + ')' : ''}`);
         (kr.regulations || []).filter((r) => r.matchedByContent).forEach((r) => {
-          const p = [r.type, r.hazardCategory, r.criterion].filter(Boolean).join(' ');
+          const p = [r.type, r.hazardCategory, r.criterion, r.fromNotice ? '[고시 기준]' : ''].filter(Boolean).join(' ');
           krParts.push(r.uniqueNo ? `${p} (${r.uniqueNo})` : p);
         });
-        if (kr.existingChemical && kr.existingChemical.matched) {
+        (kr.regulations || []).filter((r) => r.matchedPending).forEach((r) => {
+          krParts.push(`${r.type} ${r.hazardCategory} ${r.criterion} (${r.uniqueNo}) ${r.pendingFrom} 시행 예정`);
+        });
+        if (kr.grace && kr.grace.items && kr.grace.items.length) {
+          krParts.push(`유예(제${kr.grace.notice}호${kr.grace.special ? ' ' + kr.grace.special.label : ''}): `
+            + kr.grace.items.map((i) => `${i.article} ${i.task} ${i.due}`).join(', '));
+        }
+        if (isExisting) {
           const no = kr.existingChemical.korexst;
           krParts.push(no ? `기존(${no})` : '기존(번호 미확인)');
         }
-        if (!krParts.length) krParts.push('규제기준 비해당');
+        // 미등록 신규물질은 그 자체로 결과 — 비해당 문구를 덧붙이지 않는다
+        if (!kr.notFound && !krParts.some((p) => p !== '신규화학물질')) krParts.push('규제기준 비해당');
       }
 
       const koParts = [];

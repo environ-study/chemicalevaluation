@@ -196,8 +196,13 @@ def parse_kreach_xlsx(path):
                 for k, v in KREACH_HZ.findall(seg):
                     cat = k.replace('인체', '').replace('유해성', '')
                     hazard[cat] = min(float(v), hazard.get(cat, float(v)))
+        raw_cas = str(d.get('CAS번호') or '').strip()
         out.append({
-            'cas': str(d.get('CAS번호') or '').strip(),
+            # 한 칸에 CAS가 여러 개인 행(예: 이미다클로프리드 "105827-78-9, 138261-41-3")은
+            # 각각 연결하고, K-REACH API 검색용으로 원문 문자열을 함께 보존한다
+            'cas_list': _cas_list(raw_cas),
+            'cas_raw': raw_cas,
+            'cas': raw_cas,
             'name': (d.get('국문명') or d.get('영문명') or '').strip(),
             'ke': str(d.get('기존') or '').strip(),
             'links': links,

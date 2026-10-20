@@ -145,6 +145,11 @@ def main():
             'uid': v['uid'], 'sub': v['sub'], 'name': v['name'], 'nameEn': v.get('name_en', ''),
             'hazard': v['hazard'], 'cas': list(v['cas']), 'targets': [],
         }
+    # 고시 시행 전에는 직전 목록 기준이 적용되므로, 구분별 기준이 고시마다 어떻게 바뀌었는지 남긴다
+    # (xlsx 별표 시대만 — 그 이전 목록은 모두 시행 완료)
+    history_lists = [n['id'] for n in notices if n['id'] in snaps and n['source'].endswith('.xlsx')]
+    for k, e in entries.items():
+        e['history'] = OrderedDict((nid, snaps[nid][k]['hazard']) for nid in history_lists if k in snaps[nid])
     for nid, tg in targets.items():
         for tk, t in tg.items():
             keys = by_serial.get(tk[0], []) if tk[1] is None else ([tk] if tk in entries else [])
@@ -157,11 +162,15 @@ def main():
     cas_links = defaultdict(set)
     unresolved = []
     kreach = src.parse_kreach_xlsx(os.path.join(SRC, KREACH_FILE))
-    kreach_ke = {}
+    cas_alias = {}
+    link_rows = []
     for row in kreach:
-        cas = row['cas']
-        if not src.CAS_RE.fullmatch(cas or ''):
-            continue
+        if len(row['cas_list']) > 1:
+            for c in row['cas_list']:
+                cas_alias[c] = row['cas_raw']
+        for c in row['cas_list']:
+            link_rows.append((c, row))
+    for cas, row in link_rows:
         for ln in row['links']:
             s = src.serial(ln['uid'])
             cands = by_serial.get(s, [])
@@ -201,9 +210,12 @@ def main():
         'notices': OrderedDict((n['id'], {k: v for k, v in n.items() if k not in ('source', 'targetRule', 'previous', 'newSerialAfter')}) for n in notices),
         'entries': OrderedDict((ek(k), {
             'uid': e['uid'], 'sub': e['sub'], 'name': e['name'], 'hazard': e['hazard'],
-            'targets': e['targets'],
+            'history': e['history'], 'targets': e['targets'],
         }) for k, e in entries.items() if k in used),
+        'historyLists': history_lists,
         'cas': OrderedDict((c, sorted(ek(k) for k in ks)) for c, ks in sorted(cas_links.items())),
+        # K-REACH API는 CAS가 묶여 등록된 물질을 묶음 문자열로만 검색된다
+        'casAlias': OrderedDict(sorted(cas_alias.items())),
     }
     os.makedirs(os.path.dirname(OUT_JSON), exist_ok=True)
     with open(OUT_JSON, 'w', encoding='utf-8') as f:
