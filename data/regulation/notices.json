@@ -21,7 +21,7 @@
   "notices": [
     {
       "id": "2022-63", "date": "2022-10-06", "agency": "국립환경과학원",
-      "source": "notice_2022-63_amendment.pdf", "targetRule": "amendment-doc",
+      "source": "notice_2022-63_amendment.pdf", "targetRule": "amendment-doc", "amendedItems": "exclude",
       "effective": "고시 후 1개월 경과한 날(제13·23·24·28조는 3개월)", "effectiveDate": "2022-11-06",
       "holder": "고시 시행일 이전부터 취급하는 자",
       "dueRule": "이내",
@@ -29,7 +29,7 @@
     },
     {
       "id": "2022-80", "date": "2022-12-07", "agency": "국립환경과학원", "amendedBy": "2024-44",
-      "source": "notice_2022-80_amendment.pdf", "targetRule": "amendment-doc",
+      "source": "notice_2022-80_amendment.pdf", "targetRule": "amendment-doc", "amendedItems": "exclude",
       "effective": "고시 후 1개월 경과한 날(제13·23조는 3개월, 제24·28조는 2025-08-07)", "effectiveDate": "2023-01-07",
       "holder": "고시 시행일 이전부터 취급하는 자(제24·28조는 2025-08-07 이전부터 취급한 자 포함)",
       "dueRule": "이내",

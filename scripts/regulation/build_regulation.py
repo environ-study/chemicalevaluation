@@ -73,9 +73,13 @@ def find_targets(notice, snaps, log):
         doc = src.parse_amendment_pdf(os.path.join(SRC, notice['source']))
         for uid in doc['created']:
             out[(src.serial(uid), None)] = {'kind': '신규 지정', 'prevMin': None, 'newMin': None}
-        for uid in doc['amended']:
-            # 개정 전 별표 미보유 → 함량 변경 여부를 알 수 없어 모두 대상(A안), 범위 제한 없음
-            out[(src.serial(uid), None)] = {'kind': '명칭 개정(개정 전 함량 미확인)', 'prevMin': None, 'newMin': None}
+        # 명칭 개정 항목은 개정 전 별표가 없어 함량 변경 여부를 알 수 없다.
+        # 기본(B안)은 제외 — amendedItems: "include"면 모두 대상(A안)
+        if notice.get('amendedItems', 'exclude') == 'include':
+            for uid in doc['amended']:
+                out[(src.serial(uid), None)] = {'kind': '명칭 개정(개정 전 함량 미확인)', 'prevMin': None, 'newMin': None}
+        else:
+            log.append(f"{notice['id']}: 명칭 개정 고유번호 {len(doc['amended'])}개는 개정 전 함량 미확인으로 유예 대상에서 제외(B안)")
         return out
 
     cur = snaps[notice['id']]
@@ -207,7 +211,7 @@ def main():
             'sources': [{'file': f, 'sha256': sha256(os.path.join(SRC, f))} for f in sorted(os.listdir(SRC))],
         },
         'articles': cfg['articles'],
-        'notices': OrderedDict((n['id'], {k: v for k, v in n.items() if k not in ('source', 'targetRule', 'previous', 'newSerialAfter')}) for n in notices),
+        'notices': OrderedDict((n['id'], {k: v for k, v in n.items() if k not in ('source', 'targetRule', 'previous', 'newSerialAfter', 'amendedItems')}) for n in notices),
         'entries': OrderedDict((ek(k), {
             'uid': e['uid'], 'sub': e['sub'], 'name': e['name'], 'hazard': e['hazard'],
             'history': e['history'], 'targets': e['targets'],
